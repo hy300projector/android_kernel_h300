@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Allwinner sun50iw15 (H726 / HY300) USB support
+#
+
+menu "Allwinner sun50iw15 (H726) USB support"
+
+config USB_SUN50IW15_USBC
+	tristate "Allwinner sun50iw15 USB OTG manager"
+	depends on OF
+	depends on EXTCON
+	help
+	  Say Y or M to add the USB OTG manager of the Allwinner sun50iw15
+	  (H726) SoC, as used by the HY300 projector.  It owns the usbc0
+	  "port type" configuration, the usbc / detvbus regulators, the
+	  extcon provider and (in role-switch mode) the USB role switch.
+
+endmenu

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+menu "Allwinner sunxi display support"
+
+source "drivers/video/sunxi/tvpanel/Kconfig"
+source "drivers/video/sunxi/panel_lvds_gen/Kconfig"
+source "drivers/video/sunxi/panel_dsi_gen/Kconfig"
+source "drivers/video/sunxi/z20hd720m/Kconfig"
+source "drivers/video/sunxi/vs-display/Kconfig"
+source "drivers/video/sunxi/vs-osd/Kconfig"
+
+endmenu

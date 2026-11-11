@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config SUNXI_VS_OSD
+	tristate "V-Silicon OSD framebuffer (H726)"
+	depends on FB
+	select FB_CFB_FILLRECT
+	select FB_CFB_COPYAREA
+	select FB_CFB_IMAGEBLIT
+	help
+	  Vendor OSD block (vs,osd), exposed as a framebuffer plus a misc
+	  device.  This is the graphics plane the projector UI is composited
+	  on.

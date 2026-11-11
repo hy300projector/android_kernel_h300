@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: GPL-2.0-only
+menu "Allwinner SoC Audio support"
+	depends on ARCH_SUNXI || COMPILE_TEST
+
+config SND_SUN4I_CODEC
+	tristate "Allwinner A10 Codec Support"
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	select REGMAP_MMIO
+	help
+	  Select Y or M to add support for the Codec embedded in the Allwinner
+	  A10 and affiliated SoCs.
+
+config SND_SUN8I_CODEC
+	tristate "Allwinner SUN8I audio codec"
+	depends on OF
+	depends on MACH_SUN8I || (ARM64 && ARCH_SUNXI) || COMPILE_TEST
+	depends on COMMON_CLK
+	select REGMAP_MMIO
+	help
+	  This option enables the digital part of the internal audio codec for
+	  Allwinner sun8i SoC (and particularly A33).
+
+	  Say Y or M if you want to add sun8i digital audio codec support.
+
+config SND_SUN8I_CODEC_ANALOG
+	tristate "Allwinner sun8i Codec Analog Controls Support"
+	depends on MACH_SUN8I || (ARM64 && ARCH_SUNXI) || COMPILE_TEST
+	select SND_SUN8I_ADDA_PR_REGMAP
+	help
+	  Say Y or M if you want to add support for the analog controls for
+	  the codec embedded in newer Allwinner SoCs.
+
+config SND_SUN50I_CODEC_ANALOG
+	tristate "Allwinner sun50i Codec Analog Controls Support"
+	depends on (ARM64 && ARCH_SUNXI) || COMPILE_TEST
+	select SND_SUN8I_ADDA_PR_REGMAP
+	help
+	  Say Y or M if you want to add support for the analog controls for
+	  the codec embedded in Allwinner A64 SoC.
+
+config SND_SUN4I_I2S
+	tristate "Allwinner A10 I2S Support"
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	select REGMAP_MMIO
+	help
+	  Say Y or M if you want to add support for codecs attached to
+	  the Allwinner A10 I2S. You will also need to select the
+	  individual machine drivers to support below.
+
+config SND_SUN50IW15_PCM
+	tristate "Allwinner sun50iw15 (H726) audio DMA engine"
+	depends on OF
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	help
+	  Say Y or M to add the shared DMA engine the vendor's i2s, owa and
+	  aaudio modules call into for their PCM half.  It registers a
+	  PCM-only ASoC component with a 64 KiB preallocated buffer and
+	  programs the "tx"/"rx" dma channel from the owning device node.
+	  This replaces snd_soc_sunxi_pcm.ko; the in-tree i2s/owa/aaudio
+	  drivers currently use the generic dmaengine PCM directly.
+
+config SND_SUN50IW15_SND_COMMON
+	tristate "Allwinner sun50iw15 (H726) sound common helpers"
+	depends on OF
+	help
+	  Say Y or M to add the helpers shared by the sun50iw15 audio drivers:
+	  the RX sync domain/id reference counters that gate the shared receive
+	  clock, and the card jack constructor with the vendor's headset button
+	  key map.  This replaces the parts of the vendor
+	  snd_soc_sunxi_common.ko that this tree can use.
+
+config SND_SUN50IW15_I2S
+	tristate "Allwinner sun50iw15 (H726) I2S/TDM Support"
+	depends on OF
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	select SND_SUN50IW15_PCM
+	select REGMAP_MMIO
+	help
+	  Say Y or M to add support for the I2S/TDM controller found in the
+	  Allwinner sun50iw15 (H726) SoC, as used by the HY300 projector.
+
+config SND_SUN50IW15_AAUDIO
+	tristate "Allwinner sun50iw15 (H726) audio FIFO platform"
+	depends on OF
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	select SND_SUN50IW15_PCM
+	help
+	  Say Y or M to add the audio FIFO ("aaudio") platform of the
+	  Allwinner sun50iw15 (H726) SoC, the DMA front end of the internal
+	  codec. This is the CPU side of the stock "audiocodec" card.
+
+config SND_SUN50IW15_CODEC
+	tristate "Allwinner sun50iw15 (H726) internal codec"
+	depends on OF
+	select REGMAP_MMIO
+	help
+	  Say Y or M to add support for the internal ADC/DAC codec of the
+	  Allwinner sun50iw15 (H726) SoC, as used by the HY300 projector.
+
+config SND_SUN50IW15_SND_MACH
+	tristate "Allwinner sun50iw15 (H726) sound card"
+	depends on OF
+	depends on SND_SUN50IW15_I2S
+	help
+	  Say Y or M to add the sound card glue for the Allwinner sun50iw15
+	  (H726) SoC, binding the I2S/TDM controller to a codec (or to a
+	  local dummy codec when the device tree has none).
+
+config SND_SUN50IW15_OWA
+	tristate "Allwinner sun50iw15 (H726) OWA S/PDIF / HDMI audio"
+	depends on OF
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	select SND_SUN50IW15_PCM
+	select REGMAP_MMIO
+	help
+	  Say Y or M to add the OWA (S/PDIF and HDMI audio) controller of the
+	  Allwinner sun50iw15 (H726) SoC, as used by the HY300 projector.  It is
+	  the DMA front end of the "sndowa0"/"sndowa1" cards in the stock DT.
+
+config SND_SUN4I_SPDIF
+	tristate "Allwinner A10 SPDIF Support"
+	depends on OF
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	select REGMAP_MMIO
+	help
+	  Say Y or M to add support for the S/PDIF audio block in the Allwinner
+	  A10 and affiliated SoCs.
+
+config SND_SUN8I_ADDA_PR_REGMAP
+	tristate
+	select REGMAP
+
+endmenu
+
+config SND_SUN50IW15_TRID
+	tristate "Allwinner sun50iw15 Trident audio bridge"
+	depends on ARCH_SUNXI
+	depends on SND
+	help
+	  ALSA card for the sun50iw15 Trident audio bridge used by the
+	  TV/projector output path.  Say Y to expose the TridentPCM card.

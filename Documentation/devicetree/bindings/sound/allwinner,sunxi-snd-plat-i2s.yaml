@@ -1,0 +1,212 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/sound/allwinner,sunxi-snd-plat-i2s.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Allwinner sunxi I2S/TDM controller (sun50iw15 and related)
+
+maintainers:
+  - H726 open kernel effort <kernel@h726.invalid>
+
+description: |
+  The Allwinner sunxi I2S/TDM controller.  The channel registers were
+  recovered from the vendor module (snd_soc_sunxi_i2s), not from a datasheet:
+
+    0x30        channel configuration: TX slots - 1 in [3:0],
+                RX slots - 1 in [7:4]
+    0x34+8p     TX channel select for hub pin p: slot offset [21:20],
+                slots - 1 [19:16], channel enable mask [15:0]
+    0x48+8p     TX channel map, low slots: eight 4-bit channel entries
+    0x44+8p     TX channel map, high slots (8..15)
+    0x64        RX channel select: slot offset [21:20], slots - 1 [19:16]
+    0x74        RX channel map, slots 0..3, one byte each
+    0x70        RX channel map, slots 4..7
+    0x6c        RX channel map, slots 8..11
+    0x68        RX channel map, slots 12..15
+
+  Each RX map byte holds (rxfifo-pinmap << 4) | rxfifo-chmap for that slot.
+  The driver programs the maps on every hw_params and leaves the identity
+  mapping (slot i plays channel i) when the properties below are absent,
+  which is what the vendor firmware does.
+
+properties:
+  compatible:
+    enum:
+      - allwinner,sunxi-snd-plat-i2s
+      - allwinner,sun8iw11-i2s
+      - allwinner,sun8iw17-i2s
+
+  reg:
+    maxItems: 1
+
+  clocks:
+    items:
+      - description: Bus clock
+      - description: Audio PLL
+      - description: Peripheral PLL
+      - description: Module clock
+
+  clock-names:
+    items:
+      - const: clk_bus_i2s
+      - const: clk_pll_audio_4x
+      - const: clk_pll_peri0_200m
+      - const: clk_i2s
+
+  resets:
+    maxItems: 1
+
+  dmas:
+    maxItems: 2
+    description: Playback and capture DMA channels.
+
+  dma-names:
+    items:
+      - const: tx
+      - const: rx
+
+  '#sound-dai-cells':
+    const: 0
+
+  playback-cma:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    default: 1024
+    description: Playback CMA buffer size in KiB (vendor clamps 0x40..0x400).
+
+  capture-cma:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    default: 1024
+    description: Capture CMA buffer size in KiB (vendor clamps 0x40..0x400).
+
+  tx-fifo-size:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    default: 128
+    description: Playback FIFO depth in bytes.
+
+  rx-fifo-size:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    default: 128
+    description: Capture FIFO depth in bytes.
+
+  tx-fifo-offset:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    default: 0x20
+    description: |
+      Playback FIFO offset from the reg base.  Recovered from the vendor
+      probe, which stores base + 0x20 in the playback DMA address.
+
+  rx-fifo-offset:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    default: 0x10
+    description: |
+      Capture FIFO offset from the reg base.  Recovered from the vendor
+      probe, which stores base + 0x10 in the capture DMA address.
+
+  tdm-num:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 16
+    description: TDM slot count, 0 for plain I2S.
+
+  mclk-fs:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    default: 256
+    description: Master clock to sample rate ratio used when no sysclk is set.
+
+  tx-hub-en:
+    type: boolean
+    description: |
+      Enable the TX hub, where one stream feeds several output pins.  Without
+      it only the channel count register is programmed.
+
+  rx-sync-en:
+    type: boolean
+    description: Enable the RX synchronisation domain shared with other DAIs.
+
+  tx-pin:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    maxItems: 4
+    description: |
+      Hub pins that carry playback, one entry per pin, values 0..3.  The
+      vendor enables exactly the listed slots.  When the property is absent
+      the driver falls back to pin 0, matching the vendor device trees.
+
+  rxfifo-chmap:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    minItems: 1
+    maxItems: 16
+    description: |
+      Capture channel map, one entry per slot: entry i is the channel that
+      feeds slot i.  Entries must be below 16; larger values are replaced by
+      0.  Defaults to the identity map.
+
+  rxfifo-pinmap:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    minItems: 1
+    maxItems: 16
+    description: |
+      Per-slot pin half of the capture map, packed into the high nibble of
+      each RX map byte.  Defaults to zero.
+
+patternProperties:
+  "^tx-pin[0-3]-chmap$":
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    minItems: 1
+    maxItems: 16
+    description: |
+      Playback channel map for one hub pin, one entry per slot: entry i is
+      the channel that feeds slot i of that pin.  Entries must be below 16;
+      larger values are replaced by 0.  Defaults to the identity map.
+
+required:
+  - compatible
+  - reg
+  - clocks
+  - clock-names
+  - dmas
+  - dma-names
+  - '#sound-dai-cells'
+
+additionalProperties: false
+
+examples:
+  - |
+    i2s@2033000 {
+        #sound-dai-cells = <0>;
+        compatible = "allwinner,sunxi-snd-plat-i2s";
+        reg = <0x0 0x02033000 0x0 0x7c>;
+        resets = <&ccu 30>;
+        clocks = <&ccu 105>, <&ccu 35>, <&ccu 7>, <&ccu 104>;
+        clock-names = "clk_bus_i2s", "clk_pll_audio_4x",
+                      "clk_pll_peri0_200m", "clk_i2s";
+        dmas = <&dma 3>, <&dma 3>;
+        dma-names = "tx", "rx";
+        playback-cma = <128>;
+        capture-cma = <128>;
+        tx-fifo-size = <128>;
+        rx-fifo-size = <128>;
+        tdm-num = <0>;
+        tx-pin = <0>;
+        tx-hub-en;
+        rx-sync-en;
+    };
+
+  - |
+    /* Four hub pins with an explicit, reversed slot map on pin 0. */
+    i2s@2033000 {
+        #sound-dai-cells = <0>;
+        compatible = "allwinner,sunxi-snd-plat-i2s";
+        reg = <0x0 0x02033000 0x0 0x7c>;
+        clocks = <&ccu 105>, <&ccu 35>, <&ccu 7>, <&ccu 104>;
+        clock-names = "clk_bus_i2s", "clk_pll_audio_4x",
+                      "clk_pll_peri0_200m", "clk_i2s";
+        dmas = <&dma 3>, <&dma 3>;
+        dma-names = "tx", "rx";
+        tx-pin = <0>, <1>, <2>, <3>;
+        tx-pin0-chmap = <1 0 3 2 5 4 7 6 9 8 11 10 13 12 15 14>;
+        rxfifo-chmap = <0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15>;
+        rxfifo-pinmap = <0 0 0 0 1 1 1 1 2 2 2 2 3 3 3 3>;
+        tx-hub-en;
+    };
+
+...

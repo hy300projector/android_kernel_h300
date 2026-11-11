@@ -1,0 +1,154 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Allwinner sunXi SoC drivers
+#
+
+config SUNXI_MBUS
+	bool
+	default ARCH_SUNXI
+	help
+	  Say y to enable the fixups needed to support the Allwinner
+	  MBUS DMA quirks.
+
+config SUNXI_SRAM
+	bool
+	default ARCH_SUNXI
+	select REGMAP_MMIO
+	help
+	  Say y here to enable the SRAM controller support. This
+	  device is responsible on mapping the SRAM in the sunXi SoCs
+	  whether to the CPU/DMA, or to the devices.
+
+config SUN50IW15_ADDR
+	bool "Allwinner sun50iw15 network address manager"
+	depends on ARCH_SUNXI || COMPILE_TEST
+	help
+	  Replacement for the vendor sunxi_addr module.  It owns one MAC
+	  address per interface (wifi, bt, eth), derives them from the SID
+	  chipid when the device tree asks for that, and exposes them through
+	  the sunxi-addr-mgt class.
+
+config SUN50IW15_BOOTEVENT
+	bool "Allwinner boot time log (/proc/bootevent)"
+	depends on PROC_FS && TRACEPOINTS
+	help
+	  Replacement for the vendor bootevent module.  Keeps a 960 entry ring of
+	  boot milestones in /proc/bootevent, fed from the initcall tracepoints,
+	  and exports sunxi_bootevent_log() for other drivers.
+
+config SUN50IW15_RFKILL
+	bool "Allwinner sun50iw15 wlan/bt power and rfkill control"
+	depends on ARCH_SUNXI || COMPILE_TEST
+	select RFKILL
+	help
+	  Replacement for the vendor sunxi_rfkill module.  Drives the WLAN and
+	  Bluetooth regulators and enable lines described by the sunxi-rfkill
+	  device tree node, exposes the sunxi-wlan misc device with the rf-ctrl
+	  power_state/scan_device attributes, and registers an rfkill device for
+	  Bluetooth.
+
+
+config SUN50IW15_DRM_HEAP
+	bool "Allwinner sun50iw15 DRM heap (/dev/sunxi_drm_heap)"
+	depends on ARCH_SUNXI || COMPILE_TEST
+	select DMA_SHARED_BUFFER
+	select GENERIC_ALLOCATOR
+	help
+	  Replacement for the vendor's built-in drm_heap driver: a gen_pool
+	  carveout exported as a dma-buf behind /dev/sunxi_drm_heap, used by the
+	  composer's secure ladder (ioctl 0xC0184800, 24-byte request with the
+	  size at +0 and the dma-buf descriptor returned at +8).
+
+	  The vendor obtains the carveout from OP-TEE; this driver takes it from
+	  an "allwinner,sunxi-drm-heap" node with a reg property, or from the
+	  sunxi_drm_heap.heap_base / sunxi_drm_heap.heap_size parameters.  With
+	  neither, the device still appears and allocation fails with ENOSPC.
+
+config SUN50IW15_HIDTVREG
+	bool "Allwinner sun50iw15 HiDTV register access device"
+	depends on ARCH_SUNXI || COMPILE_TEST
+	help
+	  Replacement for the vendor hidtvreg_dev module.  Provides
+	  /dev/hidtvreg: the TV HAL reads display registers through ioctl
+	  0x1700, maps register windows with mmap, and flushes buffers with
+	  ioctl 0x5f04.  The register window is unrestricted, exactly as in
+	  the vendor driver, because no other driver owns the TV blocks.
+
+config SUN50IW15_IR
+	bool "Allwinner sun50iw15 IR receiver"
+	depends on ARCH_SUNXI || COMPILE_TEST
+	depends on RC_CORE
+	help
+	  Replacement for the vendor sunxi-ir-rx module: rc-core driver for the
+	  allwinner,irrx receiver block.
+
+config SUN50IW15_MOTOR
+	bool "Allwinner sun50iw15 focus motor and limiter"
+	depends on OF && GPIOLIB
+	help
+	  Focus motor (stepper phase GPIOs plus end-stop switch) for the
+	  H726/HY300 projector.  Provides /dev/motor_limiter, motor_ctrl and
+	  motor_limit sysfs attributes, a contrast (Sobel) autofocus search with
+	  coarse/fine sweeps and parabolic refinement, and exports
+	  sun50iw15_motor_vafocus() so the accelerometer can start an autofocus
+	  run on shake.  Sharpness comes from a registered frame source or, when
+	  none is present, from userspace through the af_metric attribute.
+	  A measured subject distance (for example from a time-of-flight range
+	  sensor) can seed the search through af_seed or
+	  sun50iw15_motor_seed_distance(), which narrows the sweep to the window
+	  around the expected focus position.
+
+
+
+config SUN50IW15_PCK_PD
+	bool "Allwinner sun50iw15 pck-600 power domains"
+	depends on ARCH_SUNXI || COMPILE_TEST
+	help
+	  Registers the GPU and VE power domains of the pck-600 power
+	  controller so devices with a power-domains phandle can attach, and
+	  gates them through the PCK-600 power policy unit registers recovered
+	  from the vendor driver (per-domain 4 KiB blocks, PWPR/PWSR power mode
+	  field, 10 ms transition poll) so idle domains can be switched off.
+	  Each domain's PWPR/PWSR state is logged at probe and exposed in
+	  debugfs under /sys/kernel/debug/sun50iw15-pck-pd/.
+
+config SUN50IW15_PCK_PD_TOLERATE_TIMEOUT
+	bool "Tolerate pck-600 power transition timeouts (bring-up only)"
+	depends on SUN50IW15_PCK_PD
+	default y
+	help
+	  Bring-up escape hatch for the pck-600 GPU/VE power domains.
+
+	  The power transition delays programmed by the driver are inherited
+	  from the A523 block because this SoC's vendor values could not be
+	  recovered.  With this option on, a transition that does not report
+	  the requested state within 10 ms is logged and treated as success:
+	  a domain that fails to power off is marked stuck-on and not polled
+	  again, and a failed power-on no longer fails the consumer's runtime
+	  resume.
+
+	  Set this to n for production once the delays have been verified on
+	  hardware; that restores strict gating, where transition failures are
+	  logged and returned to genpd.
+
+config SUNXI_TVTOP
+	tristate "Allwinner sunxi TV top module (tvfe/tvcap)"
+	depends on OF && EXTCON
+	help
+	  TV front end and capture top block: clock/reset bring-up,
+	  CVBS detection and the exported client interface used by
+	  the display stack.
+
+config SUNXI_TVTOP_ADC
+	tristate "Allwinner sunxi TV top ADC interface"
+	depends on SUNXI_TVTOP
+	help
+	  Character device exposing the TV front end ADC registers.
+
+config SUNXI_KSC
+	tristate "Allwinner H726 keystone correction (KSC)"
+	depends on OF
+	help
+	  Keystone correction device (/dev/ksc) used by the projector
+	  geometry controls.
+

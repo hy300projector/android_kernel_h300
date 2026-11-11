@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config SUNXI_TVPANEL
+	tristate "Allwinner H726 tvpanel (DSI/LVDS/TCON) support"
+	depends on OF
+	depends on COMMON_CLK
+	help
+	  Display panel framework for the Allwinner H726 (sun50iw15p1) TV
+	  output block: MIPI DSI controller, combo D-PHY, LVDS transmitter and
+	  the timing controller (TCON).
+
+	  Panel drivers (SUNXI_PANEL_LVDS_GEN, SUNXI_PANEL_DSI_GEN,
+	  SUNXI_PANEL_Z20HD720M) bind to the panel ABI exported by this module.
+
+	  Say Y here; the module is loaded by the display bring-up sequence.

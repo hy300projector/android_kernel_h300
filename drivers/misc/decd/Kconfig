@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config SUNXI_DECD
+	tristate "Allwinner H726 /dev/decd decoder ABI"
+	depends on SYNC_FILE
+	select DMABUF
+	help
+	  Userspace contract for the H726 hardware composer's decoder display
+	  device (/dev/decd).  The vendor ships no H726 driver and no register
+	  interface survives, so this implements the five proven ioctls with
+	  defined behaviour rather than claiming hardware decode.

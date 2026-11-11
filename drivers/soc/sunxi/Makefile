@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+obj-$(CONFIG_SUNXI_MBUS) +=	sunxi_mbus.o
+obj-$(CONFIG_SUNXI_SRAM) +=	sunxi_sram.o
+obj-$(CONFIG_SUN50IW15_ADDR) +=	sun50iw15-addr.o
+obj-$(CONFIG_SUN50IW15_BOOTEVENT) +=	sun50iw15-bootevent.o
+obj-$(CONFIG_SUN50IW15_RFKILL) +=	sun50iw15-rfkill.o
+obj-$(CONFIG_SUN50IW15_IR) +=	sun50iw15-ir.o
+obj-$(CONFIG_SUN50IW15_HIDTVREG)	+= sun50iw15-hidtvreg.o
+obj-$(CONFIG_SUN50IW15_DRM_HEAP)	+= sun50iw15-drm-heap.o
+obj-$(CONFIG_SUN50IW15_MOTOR) += sun50iw15-motor.o
+obj-$(CONFIG_SUN50IW15_PCK_PD)	+= sun50iw15-pck-pd.o
+obj-$(CONFIG_SUNXI_TVTOP) += sunxi_tvtop.o
+obj-$(CONFIG_SUNXI_TVTOP_ADC) += sunxi_tvtop_adc.o
+obj-$(CONFIG_SUNXI_KSC) += sunxi_ksc.o

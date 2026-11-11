@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0
+obj-$(CONFIG_SND_SUN4I_CODEC) += sun4i-codec.o
+obj-$(CONFIG_SND_SUN4I_I2S) += sun4i-i2s.o
+obj-$(CONFIG_SND_SUN4I_SPDIF) += sun4i-spdif.o
+obj-$(CONFIG_SND_SUN50IW15_PCM) += sun50iw15-pcm.o
+obj-$(CONFIG_SND_SUN50IW15_SND_COMMON) += sun50iw15-snd-common.o
+obj-$(CONFIG_SND_SUN50IW15_I2S) += sun50iw15-i2s.o
+obj-$(CONFIG_SND_SUN50IW15_CODEC) += sun50iw15-codec.o
+obj-$(CONFIG_SND_SUN50IW15_AAUDIO) += sun50iw15-aaudio.o
+obj-$(CONFIG_SND_SUN50IW15_SND_MACH) += sun50iw15-snd-mach.o
+obj-$(CONFIG_SND_SUN50IW15_OWA) += sun50iw15-owa.o
+obj-$(CONFIG_SND_SUN8I_CODEC_ANALOG) += sun8i-codec-analog.o
+obj-$(CONFIG_SND_SUN50I_CODEC_ANALOG) += sun50i-codec-analog.o
+obj-$(CONFIG_SND_SUN8I_CODEC) += sun8i-codec.o
+obj-$(CONFIG_SND_SUN8I_ADDA_PR_REGMAP) += sun8i-adda-pr-regmap.o
+obj-$(CONFIG_SND_SUN50IW15_TRID) += sun50iw15-trid.o

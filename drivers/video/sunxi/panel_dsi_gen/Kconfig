@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config SUNXI_PANEL_DSI_GEN
+	tristate "Allwinner H726 generic MIPI DSI panel"
+	depends on SUNXI_TVPANEL
+	help
+	  Panel driver for the Allwinner H726 tvpanel stack.

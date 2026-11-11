@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config SUNXI_VS_DISPLAY
+	tristate "V-Silicon display device (H726)"
+	depends on SUNXI_TVPANEL && SUNXI_TVTOP
+	help
+	  Vendor display device node (vs,display): layer composition, overlay
+	  programming and the /dev/disp style interface used by the stock
+	  Android userspace.

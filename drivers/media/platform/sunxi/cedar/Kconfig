@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config SUNXI_CEDAR_VE
+	tristate "Allwinner H726 CEDAR video engine interface"
+	depends on OF && PM
+	help
+	  Userspace interface for the H726 CEDAR video engine (/dev/cedar_dev):
+	  register mapping, clock and reset control and the vendor ioctl set.
