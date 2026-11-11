@@ -2,9 +2,11 @@
 config SUNXI_VS_OSD
 	tristate "V-Silicon OSD framebuffer (H726)"
 	depends on FB
-	select FB_CFB_FILLRECT
-	select FB_CFB_COPYAREA
-	select FB_CFB_IMAGEBLIT
+	# Depend on the fbdev blit helpers instead of selecting them: select
+	# from a tristate symbol drags them down to =m, which would turn three
+	# always-built-in helpers into extra .ko files the stock image has no
+	# counterpart for.
+	depends on FB_CFB_FILLRECT && FB_CFB_COPYAREA && FB_CFB_IMAGEBLIT
 	help
 	  Vendor OSD block (vs,osd), exposed as a framebuffer plus a misc
 	  device.  This is the graphics plane the projector UI is composited

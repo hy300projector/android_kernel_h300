@@ -921,3 +921,10 @@ config INPUT_STK83XX
 	  called stk83xx.
 
 endif
+
+config STMVL53L1
+	tristate "ST VL53L1 time-of-flight sensor"
+	depends on I2C
+	help
+	  I2C driver for the ST VL53L1 ToF sensor: power sequencing, model
+	  check, input device and the vendor sysfs control surface.

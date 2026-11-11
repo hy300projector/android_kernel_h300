@@ -850,3 +850,10 @@ config CHARGER_SURFACE
 	  Surface Book 3, and Surface Laptop Go.
 
 endif # POWER_SUPPLY
+
+config SUNXI_AC_VIRTUAL_POWER
+	tristate "Allwinner virtual AC power supply"
+	depends on POWER_SUPPLY
+	help
+	  Virtual mains power supply that always reports present/online, as
+	  expected by the stock Allwinner userspace.

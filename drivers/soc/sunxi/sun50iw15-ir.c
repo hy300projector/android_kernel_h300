@@ -111,7 +111,14 @@ struct sunxi_ir {
 	struct clk *mclk;
 	struct reset_control *rst;
 	struct rc_dev *rc;
+	struct device *dev;
+	int irq;
 	bool wakeup;
+	bool wake_armed;
+	u32 saved_ctrl;
+	u32 saved_cfg1;
+	u32 saved_cfg2;
+	u32 saved_sample;
 	u32 last_ticks;
 	u8 last_level;
 	bool started;
@@ -187,9 +194,9 @@ static irqreturn_t sunxi_ir_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int sunxi_ir_hw_init(struct platform_device *pdev, struct sunxi_ir *ir)
+static int sunxi_ir_hw_init(struct sunxi_ir *ir)
 {
-	struct device *dev = &pdev->dev;
+	struct device *dev = ir->dev;
 	u32 v;
 	int ret;
 
@@ -243,6 +250,8 @@ static int sunxi_ir_probe(struct platform_device *pdev)
 	if (!ir)
 		return -ENOMEM;
 
+	ir->dev = dev;
+
 	ir->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(ir->base))
 		return PTR_ERR(ir->base);
@@ -250,6 +259,7 @@ static int sunxi_ir_probe(struct platform_device *pdev)
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
 		return irq;
+	ir->irq = irq;
 
 	ir->bus_clk = devm_clk_get(dev, "bus");
 	if (IS_ERR(ir->bus_clk))
@@ -295,7 +305,7 @@ static int sunxi_ir_probe(struct platform_device *pdev)
 	if (ir->rc->map_name)
 		map_name = ir->rc->map_name;
 
-	ret = sunxi_ir_hw_init(pdev, ir);
+	ret = sunxi_ir_hw_init(ir);
 	if (ret)
 		return ret;
 
@@ -304,6 +314,9 @@ static int sunxi_ir_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, ret, "cannot request irq\n");
 
 	platform_set_drvdata(pdev, ir);
+
+	/* vendor sets up the device as a wakeup source when DT asks for it */
+	device_init_wakeup(dev, ir->wakeup);
 
 	dev_info(dev, "sunxi IR receiver ready%s%s\n",
 		 map_name ? ", keymap " : "", map_name ?: "");
@@ -323,6 +336,75 @@ static int sunxi_ir_remove(struct platform_device *pdev)
 	return 0;
 }
 
+/*
+ * Vendor sunxi_irrx_suspend()/sunxi_irrx_resume() semantics:
+ *
+ *  - a wakeup-capable device (DT "wakeup-source" plus device_may_wakeup())
+ *    only arms its IRQ for wake and stays powered;
+ *  - otherwise suspend saves CTRL, CFG2, SAMPLE and CFG1, clears CTRL and
+ *    powers the block down, and resume re-runs the hardware init and restores
+ *    the four saved registers before re-enabling the IRQ.
+ *
+ * Both callbacks return 0 unconditionally in the vendor driver, so a failed
+ * re-init is reported but never fails system resume.
+ */
+static int sunxi_ir_suspend(struct device *dev)
+{
+	struct sunxi_ir *ir = dev_get_drvdata(dev);
+
+	if (ir->wakeup && device_may_wakeup(dev)) {
+		if (!enable_irq_wake(ir->irq))
+			ir->wake_armed = true;
+		return 0;
+	}
+
+	disable_irq(ir->irq);
+
+	ir->saved_ctrl = readl(ir->base + SUNXI_IR_CTRL);
+	ir->saved_cfg2 = readl(ir->base + SUNXI_IR_CFG2);
+	ir->saved_sample = readl(ir->base + SUNXI_IR_SAMPLE);
+	ir->saved_cfg1 = readl(ir->base + SUNXI_IR_CFG1);
+
+	writel(0, ir->base + SUNXI_IR_CTRL);
+	clk_disable_unprepare(ir->mclk);
+	clk_disable_unprepare(ir->bus_clk);
+
+	return 0;
+}
+
+static int sunxi_ir_resume(struct device *dev)
+{
+	struct sunxi_ir *ir = dev_get_drvdata(dev);
+	int ret;
+
+	if (ir->wake_armed) {
+		disable_irq_wake(ir->irq);
+		ir->wake_armed = false;
+		return 0;
+	}
+
+	ret = sunxi_ir_hw_init(ir);
+	if (ret) {
+		dev_err(dev, "cannot re-init after resume: %d\n", ret);
+		enable_irq(ir->irq);
+		return 0;
+	}
+
+	writel(ir->saved_ctrl, ir->base + SUNXI_IR_CTRL);
+	writel(ir->saved_cfg2, ir->base + SUNXI_IR_CFG2);
+	writel(ir->saved_sample, ir->base + SUNXI_IR_SAMPLE);
+	writel(ir->saved_cfg1, ir->base + SUNXI_IR_CFG1);
+
+	enable_irq(ir->irq);
+
+	return 0;
+}
+
+static const struct dev_pm_ops sunxi_ir_pm_ops = {
+	.suspend = sunxi_ir_suspend,
+	.resume = sunxi_ir_resume,
+};
+
 static const struct of_device_id sunxi_ir_of_match[] = {
 	{ .compatible = "allwinner,irrx" },
 	{ }
@@ -335,6 +417,7 @@ static struct platform_driver sunxi_ir_driver = {
 	.driver = {
 		.name = "sunxi-ir",
 		.of_match_table = sunxi_ir_of_match,
+		.pm = &sunxi_ir_pm_ops,
 	},
 };
 module_platform_driver(sunxi_ir_driver);

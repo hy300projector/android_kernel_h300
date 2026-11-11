@@ -73,16 +73,25 @@
 #define SUN50IW15_I2S_CHAN_CFG_RX(ch)		(((ch) - 1) << 4)
 
 /*
- * Per-hub-slot TX channel select: 0x34, 0x38, 0x3c, 0x40.  Vendor
- * sunxi_i2s_set_ch_en() and sunxi_i2s_set_daifmt_fmt() write
- * [21:20] slot offset, [19:16] channels - 1, [15:0] channel enable mask into
- * each of them.  These are *not* the map registers.
+ * Per-hub-slot TX channel select: 0x34, 0x38, 0x3c, 0x40.  From the
+ * disassembly of the vendor sun8iw17_i2s_set_ch_en() in the stock
+ * snd_soc_sunxi_i2s.ko:
+ *
+ *   write 0x34, mask 0xf0000, value ch << 16       -> [19:16] channel count
+ *   write 0x34, mask 0xffff,  value table[ch - 1]  -> [15:0] enable mask
+ *
+ * where table is .L__const.sun8iw17_i2s_set_ch_en.channels_en_slot[16] in
+ * .rodata and holds the identity mask 1, 3, 7, ... 0xffff, i.e. (1 << ch) - 1.
+ * The earlier (ch - 1) << 16 was off by one: [19:16] carries the 1-based
+ * count, so every hub slot advertised one channel fewer than it really has.
+ * These are *not* the map registers.
  */
 #define SUN50IW15_I2S_TX_CHAN_SEL(slot)		(0x34 + (slot) * 4)
 #define SUN50IW15_I2S_TX_CHAN_SEL_OFF_MASK	GENMASK(21, 20)
 #define SUN50IW15_I2S_TX_CHAN_SEL_MASK		GENMASK(19, 16)
-#define SUN50IW15_I2S_TX_CHAN_SEL_VAL(ch)	(((ch) - 1) << 16)
+#define SUN50IW15_I2S_TX_CHAN_SEL_VAL(ch)	((ch) << 16)
 #define SUN50IW15_I2S_TX_CHAN_EN_MASK		GENMASK(15, 0)
+/* channels_en_slot[ch - 1]: the vendor table is the identity mask. */
 #define SUN50IW15_I2S_TX_CHAN_EN(ch)		((1U << (ch)) - 1)
 
 /*
@@ -273,6 +282,9 @@ static void sun50iw15_i2s_set_channels(struct sun50iw15_i2s *i2s,
 				       bool playback, unsigned int channels)
 {
 	unsigned int i;
+
+	/* The vendor clamps to the 16 channels the enable table covers. */
+	channels = clamp(channels, 1U, 16U);
 
 	if (playback) {
 		regmap_update_bits(i2s->regmap, SUN50IW15_I2S_CHAN_CFG,

@@ -175,9 +175,15 @@ static void sunxi_pcm_pack(const u16 *in, u32 *out, unsigned int words,
 
 		atomic_set(&block_pos, seq == 0 ? 1 : counter + 1);
 
+		/*
+		 * One channel-status bit covers a frame *pair*: the vendor masks
+		 * the counter with ~1 before indexing, so both subframes of a
+		 * frame carry the same bit.  Indexing with the raw counter made
+		 * the second subframe read the next bit instead.
+		 */
 		status = (status & 0x1f) |
 			 ((seq < 2) ? 0x80 : 0) |
-			 ((cs[(2 * seq) % SUNXI_PCM_CS_BYTES] & 1) << 5) |
+			 ((cs[(2 * (seq & ~1U)) % SUNXI_PCM_CS_BYTES] & 1) << 5) |
 			 (sunxi_pcm_parity(in[i]) << 6);
 
 		out[i] = ((u32)status << 24) | ((u32)in[i] << 11);
@@ -408,6 +414,10 @@ static int sunxi_pcm_copy_user(struct snd_soc_component *component,
 
 		if (!st->packed || !st->pack_area ||
 		    runtime->format != SNDRV_PCM_FORMAT_S16_LE)
+			return 0;
+
+		/* The vendor packs only when the stream is at least stereo. */
+		if (runtime->channels < 2)
 			return 0;
 
 		words = bytes / sizeof(u16);

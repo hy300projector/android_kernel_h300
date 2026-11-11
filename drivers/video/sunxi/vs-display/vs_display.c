@@ -1309,17 +1309,20 @@ extern int sunxi_tvtop_clk_put(int id);
 
 /*
  * The vendor module attaches the display master to its IOMMU with
- * sunxi_enable_device_iommu(2, 1).  No vendor IOMMU ABI was reconstructed
- * (the tree has only the mainline sun50i IOMMU driver), so keep the call as a
- * logged no-op rather than dropping it silently: display buffers are
- * physically contiguous through the drm-heap carveout.
+ * sunxi_enable_device_iommu(2, 1).  That helper is ported into the IOMMU
+ * driver (drivers/iommu/sun50i-iommu.c) from bsp/drivers/iommu/
+ * sunxi-iommu-v1.c, so the call programmes IOMMU_BYPASS_REG for master 2 the
+ * way the vendor does instead of being dropped.
  */
-static int vs_display_enable_iommu(unsigned int master, unsigned int enable)
+#if IS_ENABLED(CONFIG_SUN50I_IOMMU)
+extern void sunxi_enable_device_iommu(unsigned int master, unsigned int enable);
+#else
+static void sunxi_enable_device_iommu(unsigned int master, unsigned int enable)
 {
-	pr_info_once("vs-display: vendor IOMMU master %u %s (no mapping)\n",
+	pr_info_once("vs-display: no IOMMU driver, master %u %s skipped\n",
 		     master, enable ? "enable" : "disable");
-	return 0;
 }
+#endif
 
 static void dp_irq_free_all(struct dp_ctx *dp)
 {
@@ -1572,7 +1575,7 @@ static int dp_probe(struct platform_device *pdev)
 
 	dp_rt_resume(dp);
 	sunxi_tvpanel_enable();
-	vs_display_enable_iommu(2, 1);
+	sunxi_enable_device_iommu(2, 1);
 
 	pm_runtime_set_active(dp->dev);
 	pm_runtime_enable(dp->dev);

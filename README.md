@@ -1,158 +1,150 @@
-# Linux kernel
+# How do I submit patches to Android Common Kernels
 
-The Linux kernel is the core of any Linux operating system. It manages
-hardware, system resources, and provides the fundamental services for
-all other software.
+1. BEST: Make all of your changes to upstream Linux. If appropriate, backport to the stable releases.
+   These patches will be merged automatically in the corresponding common kernels. If the patch is already
+   in upstream Linux, post a backport of the patch that conforms to the patch requirements below.
+   - Do not send patches upstream that contain only symbol exports. To be considered for upstream Linux,
+additions of `EXPORT_SYMBOL_GPL()` require an in-tree modular driver that uses the symbol -- so include
+the new driver or changes to an existing driver in the same patchset as the export.
+   - When sending patches upstream, the commit message must contain a clear case for why the patch
+is needed and beneficial to the community. Enabling out-of-tree drivers or functionality is not
+not a persuasive case.
 
-## Quick Start
+2. LESS GOOD: Develop your patches out-of-tree (from an upstream Linux point-of-view). Unless these are
+   fixing an Android-specific bug, these are very unlikely to be accepted unless they have been
+   coordinated with kernel-team@android.com. If you want to proceed, post a patch that conforms to the
+   patch requirements below.
 
--   Report a bug: See Documentation/admin-guide/reporting-issues.rst
--   Get the latest kernel: <https://kernel.org>
--   Build the kernel: See
-    Documentation/admin-guide/quickly-build-trimmed-linux.rst
--   Join the community: <https://lore.kernel.org/>
+# Common Kernel patch requirements
 
-## Essential Documentation
+- All patches must conform to the Linux kernel coding standards and pass `scripts/checkpatch.pl`
+- Patches shall not break gki_defconfig or allmodconfig builds for arm, arm64, x86, x86_64 architectures
+(see  https://source.android.com/setup/build/building-kernels)
+- If the patch is not merged from an upstream branch, the subject must be tagged with the type of patch:
+`UPSTREAM:`, `BACKPORT:`, `FROMGIT:`, `FROMLIST:`, or `ANDROID:`.
+- All patches must have a `Change-Id:` tag (see https://gerrit-review.googlesource.com/Documentation/user-changeid.html)
+- If an Android bug has been assigned, there must be a `Bug:` tag.
+- All patches must have a `Signed-off-by:` tag by the author and the submitter
 
-All users should be familiar with:
+Additional requirements are listed below based on patch type
 
--   Building requirements: Documentation/process/changes.rst
--   Code of Conduct: Documentation/process/code-of-conduct.rst
--   License: See COPYING
+## Requirements for backports from mainline Linux: `UPSTREAM:`, `BACKPORT:`
 
-Documentation can be built with make htmldocs or viewed online at:
-<https://www.kernel.org/doc/html/latest/>
+- If the patch is a cherry-pick from Linux mainline with no changes at all
+    - tag the patch subject with `UPSTREAM:`.
+    - add upstream commit information with a `(cherry picked from commit ...)` line
+    - Example:
+        - if the upstream commit message is
+```
+        important patch from upstream
 
-# Who Are You?
+        This is the detailed description of the important patch
 
-Find your role below:
+        Signed-off-by: Fred Jones <fred.jones@foo.org>
+```
+>- then Joe Smith would upload the patch for the common kernel as
+```
+        UPSTREAM: important patch from upstream
 
--   New Kernel Developer: Getting started with kernel development
--   Academic Researcher: Studying kernel internals and architecture
--   Security Expert: Hardening and vulnerability analysis
--   Backport/Maintenance Engineer: Maintaining stable kernels
--   System Administrator: Configuring and troubleshooting
--   Maintainer: Leading subsystems and reviewing patches
--   Hardware Vendor: Writing drivers for new hardware
--   Distribution Maintainer: Packaging kernels for distros
--   AI Coding Assistant: LLMs and AI-powered development tools
+        This is the detailed description of the important patch
 
-# For Specific Users
+        Signed-off-by: Fred Jones <fred.jones@foo.org>
 
-## New Kernel Developer
+        Bug: 135791357
+        Change-Id: I4caaaa566ea080fa148c5e768bb1a0b6f7201c01
+        (cherry picked from commit c31e73121f4c1ec41143423ac6ce3ce6dafdcec1)
+        Signed-off-by: Joe Smith <joe.smith@foo.org>
+```
 
-Welcome! Start your kernel development journey here:
+- If the patch requires any changes from the upstream version, tag the patch with `BACKPORT:`
+instead of `UPSTREAM:`.
+    - use the same tags as `UPSTREAM:`
+    - add comments about the changes under the `(cherry picked from commit ...)` line
+    - Example:
+```
+        BACKPORT: important patch from upstream
 
--   Getting Started: Documentation/process/development-process.rst
--   Your First Patch: Documentation/process/submitting-patches.rst
--   Coding Style: Documentation/process/coding-style.rst
--   Build System: Documentation/kbuild/index.rst
--   Development Tools: Documentation/dev-tools/index.rst
--   Kernel Hacking Guide: Documentation/kernel-hacking/hacking.rst
--   Core APIs: Documentation/core-api/index.rst
+        This is the detailed description of the important patch
 
-## Academic Researcher
+        Signed-off-by: Fred Jones <fred.jones@foo.org>
 
-Explore the kernel\'s architecture and internals:
+        Bug: 135791357
+        Change-Id: I4caaaa566ea080fa148c5e768bb1a0b6f7201c01
+        (cherry picked from commit c31e73121f4c1ec41143423ac6ce3ce6dafdcec1)
+        [joe: Resolved minor conflict in drivers/foo/bar.c ]
+        Signed-off-by: Joe Smith <joe.smith@foo.org>
+```
 
--   Researcher Guidelines:
-    Documentation/process/researcher-guidelines.rst
--   Memory Management: Documentation/mm/index.rst
--   Scheduler: Documentation/scheduler/index.rst
--   Networking Stack: Documentation/networking/index.rst
--   Filesystems: Documentation/filesystems/index.rst
--   RCU (Read-Copy Update): Documentation/RCU/index.rst
--   Locking Primitives: Documentation/locking/index.rst
--   Power Management: Documentation/power/index.rst
+## Requirements for other backports: `FROMGIT:`, `FROMLIST:`,
 
-## Security Expert
+- If the patch has been merged into an upstream maintainer tree, but has not yet
+been merged into Linux mainline
+    - tag the patch subject with `FROMGIT:`
+    - add info on where the patch came from as `(cherry picked from commit <sha1> <repo> <branch>)`. This
+must be a stable maintainer branch (not rebased, so don't use `linux-next` for example).
+    - if changes were required, use `BACKPORT: FROMGIT:`
+    - Example:
+        - if the commit message in the maintainer tree is
+```
+        important patch from upstream
 
-Security documentation and hardening guides:
+        This is the detailed description of the important patch
 
--   Security Documentation: Documentation/security/index.rst
--   LSM Development: Documentation/security/lsm-development.rst
--   Self Protection: Documentation/security/self-protection.rst
--   Reporting Vulnerabilities: Documentation/process/security-bugs.rst
--   CVE Procedures: Documentation/process/cve.rst
--   Embargoed Hardware Issues:
-    Documentation/process/embargoed-hardware-issues.rst
--   Security Features: Documentation/userspace-api/seccomp_filter.rst
+        Signed-off-by: Fred Jones <fred.jones@foo.org>
+```
+>- then Joe Smith would upload the patch for the common kernel as
+```
+        FROMGIT: important patch from upstream
 
-## Backport/Maintenance Engineer
+        This is the detailed description of the important patch
 
-Maintain and stabilize kernel versions:
+        Signed-off-by: Fred Jones <fred.jones@foo.org>
 
--   Stable Kernel Rules: Documentation/process/stable-kernel-rules.rst
--   Backporting Guide: Documentation/process/backporting.rst
--   Applying Patches: Documentation/process/applying-patches.rst
--   Subsystem Profile:
-    Documentation/maintainer/maintainer-entry-profile.rst
--   Git for Maintainers: Documentation/maintainer/configure-git.rst
+        Bug: 135791357
+        (cherry picked from commit 878a2fd9de10b03d11d2f622250285c7e63deace
+         https://git.kernel.org/pub/scm/linux/kernel/git/foo/bar.git test-branch)
+        Change-Id: I4caaaa566ea080fa148c5e768bb1a0b6f7201c01
+        Signed-off-by: Joe Smith <joe.smith@foo.org>
+```
 
-## System Administrator
 
-Configure, tune, and troubleshoot Linux systems:
+- If the patch has been submitted to LKML, but not accepted into any maintainer tree
+    - tag the patch subject with `FROMLIST:`
+    - add a `Link:` tag with a link to the submittal on lore.kernel.org
+    - add a `Bug:` tag with the Android bug (required for patches not accepted into
+a maintainer tree)
+    - if changes were required, use `BACKPORT: FROMLIST:`
+    - Example:
+```
+        FROMLIST: important patch from upstream
 
--   Admin Guide: Documentation/admin-guide/index.rst
--   Kernel Parameters: Documentation/admin-guide/kernel-parameters.rst
--   Sysctl Tuning: Documentation/admin-guide/sysctl/index.rst
--   Tracing/Debugging: Documentation/trace/index.rst
--   Performance Security: Documentation/admin-guide/perf-security.rst
--   Hardware Monitoring: Documentation/hwmon/index.rst
+        This is the detailed description of the important patch
 
-## Maintainer
+        Signed-off-by: Fred Jones <fred.jones@foo.org>
 
-Lead kernel subsystems and manage contributions:
+        Bug: 135791357
+        Link: https://lore.kernel.org/lkml/20190619171517.GA17557@someone.com/
+        Change-Id: I4caaaa566ea080fa148c5e768bb1a0b6f7201c01
+        Signed-off-by: Joe Smith <joe.smith@foo.org>
+```
 
--   Maintainer Handbook: Documentation/maintainer/index.rst
--   Pull Requests: Documentation/maintainer/pull-requests.rst
--   Managing Patches: Documentation/maintainer/modifying-patches.rst
--   Rebasing and Merging:
-    Documentation/maintainer/rebasing-and-merging.rst
--   Development Process: Documentation/process/maintainer-handbooks.rst
--   Maintainer Entry Profile:
-    Documentation/maintainer/maintainer-entry-profile.rst
--   Git Configuration: Documentation/maintainer/configure-git.rst
+## Requirements for Android-specific patches: `ANDROID:`
 
-## Hardware Vendor
+- If the patch is fixing a bug to Android-specific code
+    - tag the patch subject with `ANDROID:`
+    - add a `Fixes:` tag that cites the patch with the bug
+    - Example:
+```
+        ANDROID: fix android-specific bug in foobar.c
 
-Write drivers and support new hardware:
+        This is the detailed description of the important fix
 
--   Driver API Guide: Documentation/driver-api/index.rst
--   Driver Model: Documentation/driver-api/driver-model/driver.rst
--   Device Drivers: Documentation/driver-api/infrastructure.rst
--   Bus Types: Documentation/driver-api/driver-model/bus.rst
--   Device Tree Bindings: Documentation/devicetree/bindings/
--   Power Management: Documentation/driver-api/pm/index.rst
--   DMA API: Documentation/core-api/dma-api.rst
+        Fixes: 1234abcd2468 ("foobar: add cool feature")
+        Change-Id: I4caaaa566ea080fa148c5e768bb1a0b6f7201c01
+        Signed-off-by: Joe Smith <joe.smith@foo.org>
+```
 
-## Distribution Maintainer
+- If the patch is a new feature
+    - tag the patch subject with `ANDROID:`
+    - add a `Bug:` tag with the Android bug (required for android-specific features)
 
-Package and distribute the kernel:
-
--   Stable Kernel Rules: Documentation/process/stable-kernel-rules.rst
--   ABI Documentation: Documentation/ABI/README
--   Kernel Configuration: Documentation/kbuild/kconfig.rst
--   Module Signing: Documentation/admin-guide/module-signing.rst
--   Kernel Parameters: Documentation/admin-guide/kernel-parameters.rst
--   Tainted Kernels: Documentation/admin-guide/tainted-kernels.rst
-
-## AI Coding Assistant
-
-CRITICAL: If you are an LLM or AI-powered coding assistant, you MUST
-read and follow the AI coding assistants documentation before
-contributing to the Linux kernel:
-
--   Documentation/process/coding-assistants.rst
-
-This documentation contains essential requirements about licensing,
-attribution, and the Developer Certificate of Origin that all AI tools
-must comply with.
-
-# Communication and Support
-
--   Mailing Lists: <https://lore.kernel.org/>
--   IRC: #kernelnewbies on irc.oftc.net
--   Bugzilla: <https://bugzilla.kernel.org/>
--   MAINTAINERS file: Lists subsystem maintainers and mailing lists
--   Email Clients: Documentation/process/email-clients.rst

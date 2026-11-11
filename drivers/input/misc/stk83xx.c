@@ -21,9 +21,11 @@
  *    focus motor driver (sun50iw15_motor_vafocus()), which is also counted,
  *    rate-limited into the log and exposed through sysfs.
  *
- * The HAL (android.hardware.sensors@2.0-service) matches accelerometers by
- * input device name, and "STK 3-axis Accelerometer" is the name it knows for
- * this chip family, so the name is significant.
+ * The HAL (android.hardware.sensors@2.0-service) matches input devices by the
+ * name file under /sys/class/input/eventN and compares it with gsensor_name
+ * from gsensor.cfg.  The vendor module registers "stk83xx", so that is the name
+ * this driver uses; "STK 3-axis Accelerometer" is only the sensor_t.name the
+ * HAL reports to the framework.
  *
  * Both stk,stk83xx device tree nodes on twi1 (0x18 and 0x19) bind here; the one
  * whose chip does not answer gets -ENODEV from probe, exactly like the vendor
@@ -73,6 +75,24 @@
 #define STK83XX_REG_YOUT	0x2a	/* Y low, Y high at +1 */
 #define STK83XX_REG_ZOUT	0x2c	/* Z low, Z high at +1 */
 
+/*
+ * STK8BA58 map.  The vendor drives this part entirely through 0x10/0x11/0x17
+ * (stk_reg_init and stk_set_enable in the decompile), while the SC7A20H uses
+ * 0x20/0x1F.  Both parts can sit on the two DTS addresses, so the driver picks
+ * the map from the chip id instead of hard-coding one.
+ */
+#define STK8BA58_REG_CHIP_ID	0x00
+#define STK8BA58_REG_RANGE	0x0f	/* stk_range_selection writes here */
+#define STK8BA58_REG_BW		0x10	/* bandwidth byte from the ESM table */
+#define STK8BA58_REG_ODR	0x11	/* ODR bits [3:1], bit 7 = standby */
+#define STK8BA58_REG_POWER	0x17	/* 0x10 = on, 0x00 = off */
+#define STK8BA58_REG_MODE1	0x14
+#define STK8BA58_REG_MODE2	0x1a
+#define STK8BA58_REG_MODE3	0x20
+#define STK8BA58_ODR_MASK	0x7e
+#define STK8BA58_ODR_STANDBY	0x80
+#define STK8BA58_REG_DATA	0x02	/* X/Y/Z, six bytes (stk_read_accel_rawdata) */
+
 #define STK83XX_DATA_RDY	BIT(3)
 
 #define STK83XX_POLL_DEFAULT_MS	50
@@ -82,7 +102,11 @@
 #define STK83XX_FIR_MAX		16
 #define STK83XX_FIR_DEFAULT	8
 
-/* Thresholds in the same units as the reported samples (about 128 per g). */
+/*
+ * Thresholds in the same units as the reported samples, tuned for the sc7a20h
+ * (128 counts per g at 2 g).  The stk8ba58 reports 2048 counts per g, so probe
+ * scales the default when that map is selected.
+ */
 #define STK83XX_SHAKE_DEFAULT	45
 #define STK83XX_SWIPE_DEFAULT	60
 
@@ -94,8 +118,17 @@
  * be 128 counts per g, which is where the HAL's familiar scale comes from.)
  * The vendor module applied exactly this shift to Z; one consistent shift for
  * all three axes keeps them in proportion for rotation and tilt.
+ *
+ * The stk8ba58 uses a different sensitivity for the same shift, so anything
+ * converting counts to physical units must go through
+ * stk83xx_counts_per_g() instead of assuming this map.
  */
 #define STK83XX_SHIFT		3
+
+enum stk83xx_variant {
+	STK83XX_SC7A20,
+	STK83XX_STK8BA58,
+};
 
 struct stk83xx {
 	struct i2c_client *client;
@@ -108,6 +141,7 @@ struct stk83xx {
 	u8 direction;
 	u8 chip_id;
 	const char *chip_name;
+	u8 variant;
 
 	/* tilt / swipe / shake state, mirroring the vendor sensor hub */
 	s32 fir[3][STK83XX_FIR_MAX];
@@ -157,6 +191,98 @@ static const struct {
 	{ STK83XX_REG_INT_CFG2, 0x10 },
 };
 
+/*
+ * STK8BA58 init, from the vendor's stk_reg_init (decompile 4688).  Register
+ * literals are copied verbatim; 0x0F = 3 is the range the vendor passes
+ * (stk_range_selection(a1, 3)), and the ODR/bandwidth pair comes from the ESM
+ * table below.  The vendor then parks the part in standby and the probe
+ * re-enables it through 0x11/0x17.
+ */
+static const struct {
+	u8 reg;
+	u8 val;
+} stk8ba58_init_seq[] = {
+	{ STK8BA58_REG_MODE1, 0xb6 },
+	{ STK8BA58_REG_MODE3, 0x01 },
+	{ STK8BA58_REG_MODE2, 0x01 },
+	{ STK83XX_REG_INT_CFG1, 0x00 },	/* 0x21 */
+	{ STK83XX_REG_YOUT, 0x00 },	/* 0x2a */
+	{ STK83XX_REG_DATA_STS, 0x00 },	/* 0x27 */
+	{ STK83XX_REG_XOUT, 0x14 },	/* 0x28 */
+	{ 0x29, 0x96 },
+	{ 0x2b, 0x32 },
+};
+
+struct stk8ba58_odr {
+	u32 period_us;
+	u8 bw;
+	u8 odr;
+};
+
+/*
+ * stkESMTable from the module (.rodata 0x190, 16 x 12 B), the table the vendor
+ * copies for chip ids 0x25/0x26.  Rows whose ODR byte is zero only change the
+ * bandwidth filter; they are omitted because writing 0x11 = 0 parks the part
+ * and our poll loop does not depend on the chip-side output rate.
+ */
+static const struct stk8ba58_odr stk8ba58_odr[] = {
+	{ 1000000, 0x08, 0x7e },
+	{  500000, 0x08, 0x7c },
+	{  100000, 0x0a, 0x7a },
+	{   50000, 0x0b, 0x78 },
+	{   40000, 0x0b, 0x76 },
+	{   20000, 0x0b, 0x74 },
+	{   10000, 0x0d, 0x72 },
+	{    5000, 0x0e, 0x6e },
+	{    3333, 0x0e, 0x6c },
+};
+
+static u32 stk8ba58_delta(u32 a, u32 b)
+{
+	return a > b ? a - b : b - a;
+}
+
+static const struct stk8ba58_odr *stk8ba58_odr_for(u32 delay_ms)
+{
+	u32 target = delay_ms * 1000;
+	const struct stk8ba58_odr *best = &stk8ba58_odr[0];
+	u32 best_delta = stk8ba58_delta(target, best->period_us);
+	size_t i;
+
+	for (i = 1; i < ARRAY_SIZE(stk8ba58_odr); i++) {
+		u32 delta = stk8ba58_delta(target, stk8ba58_odr[i].period_us);
+
+		if (delta < best_delta) {
+			best = &stk8ba58_odr[i];
+			best_delta = delta;
+		}
+	}
+
+	return best;
+}
+
+/*
+ * stk8ba58 keeps its range in 0x0F and encodes the sensitivity rather than a
+ * g index.  stk_range_selection switches on the value read back from 0x0F and
+ * maps 3/5/8/12 to 16384/8192/4096/2048 LSB per g on the 0x25/0x26 parts, i.e.
+ * 2/4/8/16 g.  The vendor's stk_reg_init passes 3, so init runs at 2 g.
+ */
+static u8 stk8ba58_range_code(unsigned int g)
+{
+	switch (g) {
+	case 2:
+		return 3;
+	case 4:
+		return 5;
+	case 8:
+		return 8;
+	case 16:
+		return 12;
+	default:
+		return 0;
+	}
+}
+
 static int stk83xx_read(struct stk83xx *stk, u8 reg)
 {
 	int ret;
@@ -195,14 +321,57 @@ static void stk83xx_init_chip(struct stk83xx *stk)
 {
 	size_t i;
 
+	if (stk->variant == STK83XX_STK8BA58) {
+		const struct stk8ba58_odr *odr = stk8ba58_odr_for(stk->delay_ms);
+
+		for (i = 0; i < ARRAY_SIZE(stk8ba58_init_seq); i++)
+			stk83xx_write(stk, stk8ba58_init_seq[i].reg,
+				      stk8ba58_init_seq[i].val);
+
+		stk83xx_write(stk, STK8BA58_REG_RANGE,
+			      stk8ba58_range_code(stk->range_g));
+		stk83xx_write(stk, STK8BA58_REG_ODR, odr->odr);
+		stk83xx_write(stk, STK8BA58_REG_BW, odr->bw);
+		stk83xx_write(stk, 0x34, 0x04);
+		stk83xx_write(stk, STK8BA58_REG_ODR, STK8BA58_ODR_STANDBY);
+		return;
+	}
+
 	for (i = 0; i < ARRAY_SIZE(stk83xx_init_seq); i++)
 		stk83xx_write(stk, stk83xx_init_seq[i].reg,
 			      stk83xx_init_seq[i].val);
 }
 
-/* Put the part in standby (0x20 = 0) or back into measurement (0x47). */
+/*
+ * sc7a20: CTRL1 (0x20) carries both the power and the ODR bits, written as
+ * 0x47 / 0x00.
+ *
+ * STK8BA58: the vendor's stk_set_enable (decompile 4395-4445) reads 0x11,
+ * keeps the ODR field and writes the ESM table code, then raises the power
+ * register (0x17 = 0x10).  Standby is 0x11 = 0x80 with 0x17 = 0x00.
+ */
 static void stk83xx_set_active(struct stk83xx *stk, bool on)
 {
+	if (stk->variant == STK83XX_STK8BA58) {
+		if (on) {
+			const struct stk8ba58_odr *odr =
+				stk8ba58_odr_for(stk->delay_ms);
+			int cur = stk83xx_read(stk, STK8BA58_REG_ODR);
+
+			if (cur >= 0)
+				stk83xx_write(stk, STK8BA58_REG_ODR,
+					      (cur & STK8BA58_ODR_MASK) |
+					      odr->odr);
+			stk83xx_write(stk, STK8BA58_REG_BW, odr->bw);
+			stk83xx_write(stk, STK8BA58_REG_POWER, 0x10);
+		} else {
+			stk83xx_write(stk, STK8BA58_REG_ODR,
+				      STK8BA58_ODR_STANDBY);
+			stk83xx_write(stk, STK8BA58_REG_POWER, 0x00);
+		}
+		return;
+	}
+
 	if (on) {
 		stk83xx_write(stk, STK83XX_REG_CTRL1, 0x47);
 		stk83xx_update_bits(stk, STK83XX_REG_INT_CFG3, 0x30, 0x10);
@@ -367,36 +536,54 @@ static void stk83xx_process(struct stk83xx *stk, s32 x, s32 y, s32 z)
 	stk->last[2] = z;
 }
 
-static void stk83xx_report(struct stk83xx *stk)
+/*
+ * One raw sample in the units the input device reports.
+ *
+ * sc7a20h: status 0x27 bit 3, then X/Y/Z as six bytes from 0x28 (little
+ * endian, YOUT = XOUT + 2, ZOUT = XOUT + 4).
+ *
+ * stk8ba58: the vendor's stk_read_accel_rawdata reads six bytes from 0x02 and
+ * does not poll a status bit -- the part free-runs at the rate programmed into
+ * 0x11.  Register 0x28 there is configuration written by stk_reg_init, not
+ * data, so the sc7a20h address would return filter settings.
+ */
+static int stk83xx_fetch_sample(struct stk83xx *stk, s32 *x, s32 *y, s32 *z)
 {
-	int xl, xh, yl, yh, zl, zh;
-	s32 x, y, z;
-	int i;
+	u8 base = stk->variant == STK83XX_STK8BA58 ?
+		  STK8BA58_REG_DATA : STK83XX_REG_XOUT;
+	int b[6], i;
 
-	/* Wait for a fresh sample, the vendor polls the same bit. */
-	for (i = 0; i < 40; i++) {
-		int sts = stk83xx_read(stk, STK83XX_REG_DATA_STS);
+	if (stk->variant != STK83XX_STK8BA58) {
+		for (i = 0; i < 40; i++) {
+			int sts = stk83xx_read(stk, STK83XX_REG_DATA_STS);
 
-		if (sts < 0)
-			return;
-		if (sts & STK83XX_DATA_RDY)
-			break;
-		usleep_range(500, 1000);
+			if (sts < 0)
+				return sts;
+			if (sts & STK83XX_DATA_RDY)
+				break;
+			usleep_range(500, 1000);
+		}
 	}
 
-	xl = stk83xx_read(stk, STK83XX_REG_XOUT);
-	xh = stk83xx_read(stk, STK83XX_REG_XOUT + 1);
-	yl = stk83xx_read(stk, STK83XX_REG_YOUT);
-	yh = stk83xx_read(stk, STK83XX_REG_YOUT + 1);
-	zl = stk83xx_read(stk, STK83XX_REG_ZOUT);
-	zh = stk83xx_read(stk, STK83XX_REG_ZOUT + 1);
+	for (i = 0; i < 6; i++) {
+		b[i] = stk83xx_read(stk, base + i);
+		if (b[i] < 0)
+			return -EIO;
+	}
 
-	if (xl < 0 || xh < 0 || yl < 0 || yh < 0 || zl < 0 || zh < 0)
+	*x = ((s16)((b[1] << 8) | b[0])) >> STK83XX_SHIFT;
+	*y = ((s16)((b[3] << 8) | b[2])) >> STK83XX_SHIFT;
+	*z = ((s16)((b[5] << 8) | b[4])) >> STK83XX_SHIFT;
+
+	return 0;
+}
+
+static void stk83xx_report(struct stk83xx *stk)
+{
+	s32 x, y, z;
+
+	if (stk83xx_fetch_sample(stk, &x, &y, &z))
 		return;
-
-	x = ((s16)((xh << 8) | xl)) >> STK83XX_SHIFT;
-	y = ((s16)((yh << 8) | yl)) >> STK83XX_SHIFT;
-	z = ((s16)((zh << 8) | zl)) >> STK83XX_SHIFT;
 
 	/* Zero until userspace writes cali=1. */
 	x -= stk->bias[0];
@@ -529,6 +716,8 @@ static ssize_t delay_store(struct device *dev, struct device_attribute *attr,
 	stk->delay_ms = delay;
 	if (stk->enabled) {
 		hrtimer_cancel(&stk->timer);
+		/* the chip-side rate follows the poll period on both maps */
+		stk83xx_set_active(stk, true);
 		stk83xx_start(stk);
 	}
 	mutex_unlock(&stk->lock);
@@ -536,6 +725,67 @@ static ssize_t delay_store(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 static DEVICE_ATTR_RW(delay);
+
+/*
+ * Stock init.input.rc writes
+ *   /sys/class/input/input1/accel_enable 1
+ *   /sys/class/input/input1/accel_delay 32000000
+ * right after insmod stk.ko, so the shipped driver exposes both attributes on
+ * the input device and takes accel_delay in nanoseconds (32 ms in the script).
+ * The plain enable/delay pair stays for the HAL and our own tooling.
+ */
+static ssize_t accel_enable_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	return enable_show(dev, attr, buf);
+}
+
+static ssize_t accel_enable_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	return enable_store(dev, attr, buf, count);
+}
+
+static ssize_t accel_delay_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct stk83xx *stk = dev_to_stk(dev);
+
+	return sysfs_emit(buf, "%u\n", stk->delay_ms * 1000000);
+}
+
+static ssize_t accel_delay_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct stk83xx *stk = dev_to_stk(dev);
+	unsigned int delay;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &delay);
+	if (ret)
+		return ret;
+
+	/* nanoseconds at the sysfs boundary, milliseconds internally */
+	delay /= 1000000;
+	delay = clamp(delay, STK83XX_POLL_MIN_MS, STK83XX_POLL_MAX_MS);
+
+	mutex_lock(&stk->lock);
+	stk->delay_ms = delay;
+	if (stk->enabled) {
+		hrtimer_cancel(&stk->timer);
+		/* the chip-side rate follows the poll period on both maps */
+		stk83xx_set_active(stk, true);
+		stk83xx_start(stk);
+	}
+	mutex_unlock(&stk->lock);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(accel_enable);
+static DEVICE_ATTR_RW(accel_delay);
 
 static ssize_t reg_show(struct device *dev, struct device_attribute *attr,
 			char *buf)
@@ -682,12 +932,10 @@ static void stk83xx_set_offset(struct stk83xx *stk, bool capture)
 /*
  * Chip-side range and calibration.
  *
- * The populated part is an SC7A20H: probe checks WHO_AM_I (0x0F) == 0x11 and
- * VERSION (0x70) == 0x28, the same pair the vendor's sc7a20h driver checks.
- * Unlike the older SC7A20 there is no user offset register block here; the
- * datasheet lists 0x10..0x1E as reserved, and VERSION 0x28 is the only variant
- * with a documented register map.  So the only calibration field the chip
- * exposes is full scale, in CTRL_REG4 (0x23):
+ * Two register maps share this driver.  The sc7a20h map is selected when
+ * read(0x0F) == 0x11; the stk8ba58 map when register 0x00 reads one of
+ * 0x23/0x25/0x26/0x86/0x87.  On the sc7a20h the only calibration register is
+ * full scale, in CTRL_REG4 (0x23), whose layout is:
  *
  *   bit 7 BDU, bit 6 BLE, bits 5:4 FS1:FS0, bit 3 DLPF[0], bits 2:1 ST1:ST0,
  *   bit 0 SIM.
@@ -742,10 +990,36 @@ static int stk83xx_apply_range(struct stk83xx *stk)
 			     (v & ~STK83XX_CTRL4_FS_MASK) | (fs << 4));
 }
 
-/* Milligrams represented by one reported count at the current range. */
-static int stk83xx_mg_per_count(struct stk83xx *stk)
+/* Program the range on whichever map the probed part uses. */
+static int stk83xx_set_range(struct stk83xx *stk)
 {
-	int fs;
+	if (stk->variant == STK83XX_STK8BA58) {
+		u8 code = stk8ba58_range_code(stk->range_g);
+
+		if (!code)
+			return -EINVAL;
+
+		return stk83xx_write(stk, STK8BA58_REG_RANGE, code);
+	}
+
+	return stk83xx_apply_range(stk);
+}
+
+/*
+ * Reported counts per g at the current range, in the units the input device
+ * reports (raw sample shifted right by STK83XX_SHIFT).
+ *
+ * sc7a20h: 1024 LSB/g at 2 g, halving per range step, so 128/64/32/16 counts
+ * per g after the shift.
+ *
+ * stk8ba58: the vendor's stk_range_selection sensitivity is 16384/8192/4096/
+ * 2048 LSB/g at 2/4/8/16 g, i.e. 2048/1024/512/256 counts after the same
+ * shift.  One count is therefore well under a milligram on this part, which
+ * the old integer mg-per-count could not express.
+ */
+static unsigned int stk83xx_counts_per_g(struct stk83xx *stk)
+{
+	unsigned int fs;
 
 	switch (stk->range_g) {
 	case 2:
@@ -763,39 +1037,16 @@ static int stk83xx_mg_per_count(struct stk83xx *stk)
 		break;
 	}
 
-	return (1 << fs) << STK83XX_SHIFT;
+	if (stk->variant == STK83XX_STK8BA58)
+		return (16384u >> fs) >> STK83XX_SHIFT;
+
+	return (1024u >> fs) >> STK83XX_SHIFT;
 }
 
 /* One sample, already shifted to the units the input device reports. */
 static int stk83xx_read_xyz(struct stk83xx *stk, s32 *x, s32 *y, s32 *z)
 {
-	int xl, xh, yl, yh, zl, zh, i;
-
-	for (i = 0; i < 40; i++) {
-		int sts = stk83xx_read(stk, STK83XX_REG_DATA_STS);
-
-		if (sts < 0)
-			return sts;
-		if (sts & STK83XX_DATA_RDY)
-			break;
-		usleep_range(500, 1000);
-	}
-
-	xl = stk83xx_read(stk, STK83XX_REG_XOUT);
-	xh = stk83xx_read(stk, STK83XX_REG_XOUT + 1);
-	yl = stk83xx_read(stk, STK83XX_REG_YOUT);
-	yh = stk83xx_read(stk, STK83XX_REG_YOUT + 1);
-	zl = stk83xx_read(stk, STK83XX_REG_ZOUT);
-	zh = stk83xx_read(stk, STK83XX_REG_ZOUT + 1);
-
-	if (xl < 0 || xh < 0 || yl < 0 || yh < 0 || zl < 0 || zh < 0)
-		return -EIO;
-
-	*x = ((s16)((xh << 8) | xl)) >> STK83XX_SHIFT;
-	*y = ((s16)((yh << 8) | yl)) >> STK83XX_SHIFT;
-	*z = ((s16)((zh << 8) | zl)) >> STK83XX_SHIFT;
-
-	return 0;
+	return stk83xx_fetch_sample(stk, x, y, z);
 }
 
 static int stk83xx_average(struct stk83xx *stk, s32 out[3], int count)
@@ -900,7 +1151,7 @@ static ssize_t range_store(struct device *dev, struct device_attribute *attr,
 	mutex_lock(&stk->lock);
 	prev = stk->range_g;
 	stk->range_g = g;
-	ret = stk83xx_apply_range(stk);
+	ret = stk83xx_set_range(stk);
 	if (ret)
 		stk->range_g = prev;
 	mutex_unlock(&stk->lock);
@@ -938,11 +1189,23 @@ static ssize_t selftest_store(struct device *dev, struct device_attribute *attr,
 	if (mode > 2)
 		return -EINVAL;
 
+	/*
+	 * The mechanism this drives is the sc7a20h ST1:ST0 field in CTRL4 (0x23).
+	 * The vendor's stk8ba58 test is different (dump 64 registers, run
+	 * stk_testOffsetNoise, re-run stk_reg_init), so refuse rather than poking
+	 * a register that has another meaning on that map.
+	 */
+	if (stk->variant == STK83XX_STK8BA58) {
+		dev_warn_ratelimited(&stk->client->dev,
+				     "selftest is not implemented for the stk8ba58 map\n");
+		return -EOPNOTSUPP;
+	}
+
 	mutex_lock(&stk->lock);
 
 	if (!mode) {
 		stk->st_valid = false;
-		ret = stk83xx_apply_range(stk);	/* also clears ST1:ST0 */
+		ret = stk83xx_set_range(stk);	/* also clears ST1:ST0 */
 		mutex_unlock(&stk->lock);
 		return ret ? ret : count;
 	}
@@ -975,10 +1238,11 @@ clear:
 			      v & ~STK83XX_CTRL4_ST_MASK);
 
 	if (!ret) {
-		mg = stk83xx_mg_per_count(stk);
-		stk->st_delta_mg[0] = (st[0] - base[0]) * mg;
-		stk->st_delta_mg[1] = (st[1] - base[1]) * mg;
-		stk->st_delta_mg[2] = (st[2] - base[2]) * mg;
+		/* counts per g on the probed variant, not a fixed mg step */
+		mg = stk83xx_counts_per_g(stk);
+		stk->st_delta_mg[0] = div_s64((s64)(st[0] - base[0]) * 1000, mg);
+		stk->st_delta_mg[1] = div_s64((s64)(st[1] - base[1]) * 1000, mg);
+		stk->st_delta_mg[2] = div_s64((s64)(st[2] - base[2]) * 1000, mg);
 		/* Datasheet typicals are 320/320/430 mg; accept a wide band. */
 		stk->st_pass = stk->st_delta_mg[0] > 100 &&
 			       stk->st_delta_mg[0] < 900 &&
@@ -1149,6 +1413,8 @@ static DEVICE_ATTR_RW(firlen);
 static struct attribute *stk83xx_attrs[] = {
 	&dev_attr_enable.attr,
 	&dev_attr_delay.attr,
+	&dev_attr_accel_enable.attr,
+	&dev_attr_accel_delay.attr,
 	&dev_attr_reg.attr,
 	&dev_attr_chipinfo.attr,
 	&dev_attr_angle.attr,
@@ -1169,7 +1435,13 @@ static const char *stk83xx_chip_name(u8 id)
 {
 	switch (id) {
 	case 0x11:
-		return "stk8ba58/sc7a20h";
+		return "sc7a20h";
+	case 0x23:
+	case 0x25:
+	case 0x26:
+	case 0x86:
+	case 0x87:
+		return "stk8ba58";
 	case 0x21:
 		return "stk8321";
 	case 0x29:
@@ -1186,6 +1458,7 @@ static int stk83xx_probe(struct i2c_client *client)
 	struct stk83xx *stk;
 	int id, ret;
 	u32 val;
+	bool thresh_set = false;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return dev_err_probe(dev, -EOPNOTSUPP,
@@ -1209,21 +1482,66 @@ static int stk83xx_probe(struct i2c_client *client)
 	if (!of_property_read_u32(np, "stk,firlen", &val) &&
 	    val && val <= STK83XX_FIR_MAX)
 		stk->fir_len = val;
-	if (!of_property_read_u32(np, "stk,shake_threshold", &val))
+	if (!of_property_read_u32(np, "stk,shake_threshold", &val)) {
 		stk->shake_threshold = val;
+		thresh_set = true;
+	}
 
 	mutex_init(&stk->lock);
 
-	id = stk83xx_read(stk, STK83XX_REG_DEVID);
+	id = stk83xx_read(stk, STK8BA58_REG_CHIP_ID);
 	if (id < 0)
 		return id;
-	if (id == 0x00 || id == 0xff)
-		return -ENODEV;
+
+	/*
+	 * Variant detection follows the vendor module: stk_data_initialize reads
+	 * register 0x00 and accepts 0x23/0x25/0x26/0x86/0x87 (the stk8ba58 map,
+	 * driven through 0x10/0x11/0x17), while sc7a20_reg_init is gated on
+	 * read(0x0F) == 0x11 (the 0x20/0x1F map).  Everything else is rejected
+	 * instead of being driven with the wrong register set.
+	 */
+	switch (id) {
+	case 0x23:
+	case 0x25:
+	case 0x26:
+	case 0x86:
+	case 0x87:
+		stk->variant = STK83XX_STK8BA58;
+		/* vendor probe: stk_set_delay(..., 32000 us) on this path */
+		stk->delay_ms = 32;
+		/* stk_reg_init(..., 3, ...) selects 2 g on this map */
+		stk->range_g = 2;
+		break;
+	default:
+		id = stk83xx_read(stk, STK83XX_REG_DEVID);
+		if (id < 0)
+			return id;
+		if (id != 0x11) {
+			dev_warn(dev,
+				 "unrecognised accelerometer (0x00 = 0x%02x, 0x0F = 0x%02x); refusing probe\n",
+				 stk83xx_read(stk, STK8BA58_REG_CHIP_ID), id);
+			return -ENODEV;
+		}
+		stk->variant = STK83XX_SC7A20;
+		break;
+	}
+
+	if (!thresh_set && stk->variant == STK83XX_STK8BA58) {
+		/*
+		 * 45 counts was tuned against the sc7a20h's 128 counts per g at
+		 * 2 g; the stk8ba58 reports 2048 counts per g there, so scale the
+		 * default instead of making shake/swipe 16x too sensitive.
+		 */
+		stk->shake_threshold = STK83XX_SHAKE_DEFAULT *
+			(stk83xx_counts_per_g(stk) / 128);
+	}
 
 	stk->chip_id = id;
 	stk->chip_name = stk83xx_chip_name(id);
 
-	dev_info(dev, "found %s (id 0x%02x) at 0x%02x\n", stk->chip_name, id,
+	dev_info(dev, "found %s (id 0x%02x, %s map) at 0x%02x\n",
+		 stk->chip_name, id,
+		 stk->variant == STK83XX_STK8BA58 ? "stk8ba58" : "sc7a20",
 		 client->addr);
 
 	stk83xx_init_chip(stk);
@@ -1234,7 +1552,16 @@ static int stk83xx_probe(struct i2c_client *client)
 	if (!stk->idev)
 		return -ENOMEM;
 
-	stk->idev->name = "STK 3-axis Accelerometer";
+	/*
+	 * The vendor module (stk.ko, Sensortek, built from
+	 * bsp/drivers/input/sensor/stk83xx/stk83xx.c) stores .L.str.24 -- the
+	 * literal "stk83xx" -- straight into input_dev->name.  Userspace finds
+	 * the sensor through that name: the sensors HAL reads the name file of
+	 * every /sys/class/input/eventN entry and compares it with gsensor_name
+	 * from gsensor.cfg.  "STK 3-axis Accelerometer" is only the
+	 * sensor_t.name it reports to the framework.
+	 */
+	stk->idev->name = "stk83xx";
 	stk->idev->phys = "stk83xx/input0";
 	stk->idev->id.bustype = BUS_I2C;
 	stk->idev->id.vendor = 0x0001;
@@ -1292,7 +1619,15 @@ static int __maybe_unused stk83xx_suspend(struct device *dev)
 {
 	struct stk83xx *stk = dev_get_drvdata(dev);
 
-	cancel_delayed_work_sync(&stk->calib_work);
+	/*
+	 * Vendor stk83xx_suspend (stock stk.ko, 0x3ea8): if the sensor is
+	 * enabled, call stk_set_enable(dev, 0), remember in a flag byte that it
+	 * did so and return 0.  stk_set_enable() is the CTRL1 write the enable
+	 * attribute uses; it stops sampling and never propagates a failure.
+	 */
+	if (!stk->enabled)
+		return 0;
+
 	stk83xx_stop(stk);
 	stk83xx_set_active(stk, false);
 
@@ -1303,18 +1638,16 @@ static int __maybe_unused stk83xx_resume(struct device *dev)
 {
 	struct stk83xx *stk = dev_get_drvdata(dev);
 
-	if (!stk->calib_loaded && stk->calib_retries < STK83XX_CALIB_RETRIES)
-		schedule_delayed_work(&stk->calib_work, 0);
-
+	/*
+	 * Vendor stk83xx_resume (stock stk.ko, 0x3ef0): re-run
+	 * stk_set_enable(dev, 1) when suspend turned the sensor off, then clear
+	 * the saved flag.  The vendor restores no range and retries no
+	 * calibration here -- both stay in the chip across suspend.
+	 */
 	if (!stk->enabled)
 		return 0;
 
 	stk83xx_set_active(stk, true);
-
-	mutex_lock(&stk->lock);
-	stk83xx_apply_range(stk);
-	mutex_unlock(&stk->lock);
-
 	stk83xx_start(stk);
 
 	return 0;
@@ -1349,3 +1682,6 @@ module_i2c_driver(stk83xx_driver);
 MODULE_AUTHOR("H726 kernel rewrite");
 MODULE_DESCRIPTION("Sensortek STK83xx / SC7A20H 3-axis accelerometer");
 MODULE_LICENSE("GPL");
+
+/* The vendor module loads its calibration blob through the VFS. */
+MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);

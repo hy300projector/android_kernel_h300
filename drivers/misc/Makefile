@@ -62,3 +62,14 @@ obj-$(CONFIG_HI6421V600_IRQ)	+= hi6421v600-irq.o
 obj-$(CONFIG_UID_SYS_STATS)	+= uid_sys_stats.o
 obj-$(CONFIG_OPEN_DICE)		+= open-dice.o
 obj-$(CONFIG_SUNXI_DECD)	+= decd/
+
+obj-$(CONFIG_SUNXI_AW_CONFIG)		+= aw-config.o
+obj-$(CONFIG_SUNXI_DIRECT_GPIO)		+= sunxi-direct-gpio.o
+
+# aw-config embeds a gzipped copy of the .config used for this build.
+$(obj)/aw-config-config.gz: FORCE
+	gzip -9 -n -c $(or $(KCONFIG_CONFIG),.config) > $@
+targets += aw-config-config.gz
+CFLAGS_aw-config.o := -DAW_CONFIG_BLOB="\"$(abspath $(obj)/aw-config-config.gz)\""
+$(obj)/aw-config.o: $(obj)/aw-config-config.gz
+obj-$(CONFIG_MCU_COMM_DEV)	+= mcu_comm_dev.o

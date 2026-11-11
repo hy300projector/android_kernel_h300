@@ -210,6 +210,7 @@ static int sunxi_rfkill_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node, *child;
 	struct sunxi_rfkill *priv;
+	bool have_bt;
 	int ret;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
@@ -229,52 +230,69 @@ static int sunxi_rfkill_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->power_en) && PTR_ERR(priv->power_en) != -ENOENT)
 		return dev_err_probe(dev, PTR_ERR(priv->power_en), "power_en gpio\n");
 
-	child = of_get_compatible_child(np, "allwinner,sunxi-wlan");
-	if (!child)
-		return dev_err_probe(dev, -ENODEV, "no wlan child node\n");
-
+	/*
+	 * Vendor sunxi_wlan_init()/sunxi_bt_init() only set up the subnode they
+	 * find: of_find_matching_node_and_match() returning NULL skips the whole
+	 * block and the function still returns 0 (dec_mod/sunxi_rfkill.c:2210
+	 * and :1474).  So a board with only one of wlan/bt must still get its
+	 * rfkill device and misc node, rather than failing probe with -ENODEV.
+	 */
 	priv->wlan.busnum = 1;
-	of_property_read_u32(child, "wlan_busnum", &priv->wlan.busnum);
+	child = of_get_compatible_child(np, "allwinner,sunxi-wlan");
+	if (!child) {
+		dev_warn(dev, "no wlan child node, wlan power control disabled\n");
+	} else {
+		of_property_read_u32(child, "wlan_busnum", &priv->wlan.busnum);
 
-	priv->wlan.regon = devm_gpiod_get_from_of_node(dev, child, "wlan_regon", 0,
-						       GPIOD_OUT_LOW, "wlan_regon");
-	if (IS_ERR(priv->wlan.regon))
-		return dev_err_probe(dev, PTR_ERR(priv->wlan.regon),
-				     "wlan_regon gpio\n");
+		priv->wlan.regon = devm_gpiod_get_from_of_node(dev, child,
+							       "wlan_regon", 0,
+							       GPIOD_OUT_LOW,
+							       "wlan_regon");
+		if (IS_ERR(priv->wlan.regon))
+			return dev_err_probe(dev, PTR_ERR(priv->wlan.regon),
+					     "wlan_regon gpio\n");
 
-	priv->wlan.hostwake = devm_gpiod_get_from_of_node(dev, child, "wlan_hostwake",
-							  0, GPIOD_IN,
-							  "wlan_hostwake");
-	if (IS_ERR(priv->wlan.hostwake) && PTR_ERR(priv->wlan.hostwake) != -ENOENT)
-		return dev_err_probe(dev, PTR_ERR(priv->wlan.hostwake),
-				     "wlan_hostwake gpio\n");
+		priv->wlan.hostwake =
+			devm_gpiod_get_from_of_node(dev, child, "wlan_hostwake",
+						    0, GPIOD_IN, "wlan_hostwake");
+		if (IS_ERR(priv->wlan.hostwake) &&
+		    PTR_ERR(priv->wlan.hostwake) != -ENOENT)
+			return dev_err_probe(dev, PTR_ERR(priv->wlan.hostwake),
+					     "wlan_hostwake gpio\n");
 
-	priv->wlan.reg = devm_regulator_get_optional(dev, "wlan_power");
-	if (IS_ERR(priv->wlan.reg)) {
-		if (PTR_ERR(priv->wlan.reg) != -ENODEV)
-			return dev_err_probe(dev, PTR_ERR(priv->wlan.reg),
-					     "wlan_power regulator\n");
-		priv->wlan.reg = NULL;
+		priv->wlan.reg = devm_regulator_get_optional(dev, "wlan_power");
+		if (IS_ERR(priv->wlan.reg)) {
+			if (PTR_ERR(priv->wlan.reg) != -ENODEV)
+				return dev_err_probe(dev,
+						     PTR_ERR(priv->wlan.reg),
+						     "wlan_power regulator\n");
+			priv->wlan.reg = NULL;
+		}
+		of_node_put(child);
 	}
-	of_node_put(child);
 
 	child = of_get_compatible_child(np, "allwinner,sunxi-bt");
-	if (!child)
-		return dev_err_probe(dev, -ENODEV, "no bt child node\n");
+	have_bt = child != NULL;
+	if (!have_bt) {
+		dev_warn(dev, "no bt child node, bluetooth power control disabled\n");
+	} else {
+		priv->bt.reg = devm_regulator_get_optional(dev, "bt_power");
+		if (IS_ERR(priv->bt.reg)) {
+			if (PTR_ERR(priv->bt.reg) != -ENODEV)
+				return dev_err_probe(dev, PTR_ERR(priv->bt.reg),
+						     "bt_power regulator\n");
+			priv->bt.reg = NULL;
+		}
 
-	priv->bt.reg = devm_regulator_get_optional(dev, "bt_power");
-	if (IS_ERR(priv->bt.reg)) {
-		if (PTR_ERR(priv->bt.reg) != -ENODEV)
-			return dev_err_probe(dev, PTR_ERR(priv->bt.reg),
-					     "bt_power regulator\n");
-		priv->bt.reg = NULL;
+		priv->bt.rst = devm_gpiod_get_from_of_node(dev, child,
+							   "bt_rst_n", 0,
+							   GPIOD_OUT_LOW,
+							   "bt_rst_n");
+		if (IS_ERR(priv->bt.rst))
+			return dev_err_probe(dev, PTR_ERR(priv->bt.rst),
+					     "bt_rst_n gpio\n");
+		of_node_put(child);
 	}
-
-	priv->bt.rst = devm_gpiod_get_from_of_node(dev, child, "bt_rst_n", 0,
-						   GPIOD_OUT_LOW, "bt_rst_n");
-	if (IS_ERR(priv->bt.rst))
-		return dev_err_probe(dev, PTR_ERR(priv->bt.rst), "bt_rst_n gpio\n");
-	of_node_put(child);
 
 	priv->misc.minor = MISC_DYNAMIC_MINOR;
 	priv->misc.name = "sunxi-wlan";
@@ -293,23 +311,28 @@ static int sunxi_rfkill_probe(struct platform_device *pdev)
 		goto err_misc;
 	}
 
-	priv->bt.rfkill = rfkill_alloc("sunxi-bt", dev, RFKILL_TYPE_BLUETOOTH,
-				       &sunxi_bt_rfkill_ops, priv);
-	if (!priv->bt.rfkill) {
-		ret = -ENOMEM;
-		goto err_group;
+	/* The vendor only creates the Bluetooth rfkill node from sunxi_bt_init. */
+	if (have_bt) {
+		priv->bt.rfkill = rfkill_alloc("sunxi-bt", dev,
+					       RFKILL_TYPE_BLUETOOTH,
+					       &sunxi_bt_rfkill_ops, priv);
+		if (!priv->bt.rfkill) {
+			ret = -ENOMEM;
+			goto err_group;
+		}
+
+		rfkill_set_states(priv->bt.rfkill, true, false);
+
+		ret = rfkill_register(priv->bt.rfkill);
+		if (ret) {
+			dev_err(dev, "rfkill_register failed: %d\n", ret);
+			goto err_rfkill;
+		}
 	}
 
-	rfkill_set_states(priv->bt.rfkill, true, false);
-
-	ret = rfkill_register(priv->bt.rfkill);
-	if (ret) {
-		dev_err(dev, "rfkill_register failed: %d\n", ret);
-		goto err_rfkill;
-	}
-
-	dev_info(dev, "sunxi rfkill ready: wlan bus %u, bt rst %s\n",
-		 priv->wlan.busnum, priv->bt.rst ? "gpio" : "none");
+	dev_info(dev, "sunxi rfkill ready: wlan bus %u (%s), bt rst %s\n",
+		 priv->wlan.busnum, priv->wlan.regon ? "gpio" : "absent",
+		 priv->bt.rst ? "gpio" : "absent");
 
 	return 0;
 

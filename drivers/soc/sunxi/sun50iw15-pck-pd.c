@@ -22,13 +22,27 @@
  * PWSR for up to 10 ms until it matches.  The domain index is the child's reg
  * value (pd_gpu@0 -> 0, pd_ve@1 -> 1), and the block offset is index * 0x1000.
  *
- * DCDR and delay values are inherited from the A523 descriptor of the same
- * block; the vendor table for this SoC was not recoverable, so its entries are
- * assumed identical.  Register access goes through the parent syscon regmap.
+ * DCDR and delay values come from the vendor's per-SoC descriptor for
+ * "allwinner,sun50iw15-pck-600" in the stock vmlinux (.rodata at 0xc17d8484):
+ *
+ *   +0x00 0x0        +0x04 0x8 (power-on mode value, PPU_POWER_MODE_ON)
+ *   +0x08 0x170      +0x0c 0x174      +0x10 0xc00
+ *   +0x14 0xc04      +0x18 0xc10
+ *   +0x1c 0x2 (domains)   +0x20 0x1   +0x24 per-domain value table
+ *
+ * The per-domain table (0xc17d87bc, stride 7 words) gives both pd_gpu and
+ * pd_ve the same delays: 0x1f1f1f / 0x1f1f / 0x8080808 / 0x808 / 0x8, with
+ * 0xf as the per-domain status mask.  The offsets above match this driver
+ * exactly; only DCDR0/DCDR1 differed from the A523 defaults and are now the
+ * recovered values.  Register access goes through the parent syscon regmap.
  *
  * Two additions are deliberately outside the register work:
- *  - CONFIG_SUN50IW15_PCK_PD_TOLERATE_TIMEOUT, a bring-up escape hatch for
- *    transitions that never acknowledge (see sun50iw15_pck_pd_set_power());
+ *  - CONFIG_SUN50IW15_PCK_PD_TOLERATE_TIMEOUT, which mirrors the vendor: its
+ *    sunxi_pd_power_on()/sunxi_pd_power_off() wrappers ignore the result of
+ *    sunxi_pd_power() and return 0 unconditionally (stock vmlinux 0xc0d9653c
+ *    and 0xc0d96498, `mov r0, #0` right after the call), logging a
+ *    "Cannot change Power Domain ID" message instead (see
+ *    sun50iw15_pck_pd_set_power());
  *  - a per-domain debugfs dump of PWPR/PWSR, and the same values logged once
  *    at probe, so the first boot can be checked without a rebuild.
  */
@@ -61,9 +75,9 @@
 
 #define PPU_REG_SIZE			0x1000
 
-/* Delay programming, as used by the A523 PCK-600 block. */
-#define PPU_DEVICE_CTRL0_DELAY		0xffffff
-#define PPU_DEVICE_CTRL1_DELAY		0xffff
+/* Delay programming, from the stock sun50iw15-pck-600 descriptor table. */
+#define PPU_DEVICE_CTRL0_DELAY		0x1f1f1f
+#define PPU_DEVICE_CTRL1_DELAY		0x1f1f
 #define PPU_LPS0_DELAY_VALUE		0x8080808
 #define PPU_LPS1_DELAY_VALUE		0x808
 #define PPU_OFF2ON_DELAY_VALUE		0x8
@@ -89,18 +103,20 @@ struct sun50iw15_pck {
 #define to_sun50iw15_pd(gpd) container_of(gpd, struct sun50iw15_pck_pd, genpd)
 
 /*
- * BRING-UP FALLBACK -- CONFIG_SUN50IW15_PCK_PD_TOLERATE_TIMEOUT.
+ * VENDOR-FAITHFUL TIMEOUT HANDLING -- CONFIG_SUN50IW15_PCK_PD_TOLERATE_TIMEOUT.
  *
- * The DCDR and delay values are the A523 ones, so a value that is too short
- * for this silicon makes the 10 ms poll expire.  Strict gating would then fail
- * the GPU's runtime resume, i.e. no GPU at all, which is the worse failure
- * while bringing the board up, so the timeout is logged and treated as
- * success instead.
+ * The stock driver never fails a transition: sunxi_pd_power() polls the status
+ * register for 10 ms, and on timeout it prints a message and falls through to
+ * the same unlock/return path as the success case; its callers
+ * (sunxi_pd_power_on/_off) then return 0 unconditionally.  So a domain that
+ * does not acknowledge must still report success to genpd, exactly as the
+ * stock kernel does -- otherwise a slow block becomes a failed GPU/VE resume,
+ * which stock never produces.
  *
- * Revert for production: set CONFIG_SUN50IW15_PCK_PD_TOLERATE_TIMEOUT=n.  That
- * returns every transition failure to genpd again; the stuck_on field and the
- * two dev_warn() calls below are the only fallback code, and can be deleted
- * together with the option.
+ * Setting CONFIG_SUN50IW15_PCK_PD_TOLERATE_TIMEOUT=n makes the driver stricter
+ * than the vendor and is only useful for debugging an expected transition.
+ * The stuck_on field and the two dev_warn() calls below exist only for the
+ * vendor-compatible path.
  */
 static int sun50iw15_pck_pd_set_power(struct sun50iw15_pck_pd *pd, bool on)
 {
@@ -130,7 +146,7 @@ static int sun50iw15_pck_pd_set_power(struct sun50iw15_pck_pd *pd, bool on)
 	if (IS_ENABLED(CONFIG_SUN50IW15_PCK_PD_TOLERATE_TIMEOUT)) {
 		if (on) {
 			dev_warn(pd->dev,
-				 "domain %s not on after %u us, continuing (delays are A523 values, bring-up fallback)\n",
+				 "domain %s not on after %u us, continuing (bring-up fallback)\n",
 				 pd->genpd.name, PPU_POWER_TIMEOUT_US);
 		} else {
 			pd->stuck_on = true;

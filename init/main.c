@@ -111,6 +111,13 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/initcall.h>
 
+/*
+ * The stock user space loads bootevent.ko from vendor_dlkm and hooks these
+ * tracepoints, so they have to stay visible outside vmlinux.
+ */
+EXPORT_TRACEPOINT_SYMBOL(initcall_start);
+EXPORT_TRACEPOINT_SYMBOL(initcall_finish);
+
 #include <kunit/test.h>
 
 static int kernel_init(void *);

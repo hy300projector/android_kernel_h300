@@ -185,12 +185,14 @@ static void sc7a20h_work(struct work_struct *work)
 	mutex_unlock(&acc->lock);
 }
 
+static ktime_t sc7a20h_interval(struct sc7a20h *acc);
+
 static enum hrtimer_restart sc7a20h_timer(struct hrtimer *timer)
 {
 	struct sc7a20h *acc = container_of(timer, struct sc7a20h, timer);
 
 	schedule_work(&acc->work);
-	hrtimer_forward_now(timer, ms_to_ktime(acc->delay_ms));
+	hrtimer_forward_now(timer, sc7a20h_interval(acc));
 
 	return HRTIMER_RESTART;
 }
@@ -201,13 +203,28 @@ static void sc7a20h_stop(struct sc7a20h *acc)
 	cancel_work_sync(&acc->work);
 }
 
+/*
+ * Vendor enable_sensor() computes the poll interval as delay_ms * 1e6 ns and,
+ * for periods below 11 ms, subtracts 500000 ns before arming the timer with
+ * hrtimer_start_range_ns().  The default 50 ms period is unaffected; the tweak
+ * only matters when userspace asks for a 10 ms period.
+ */
+static ktime_t sc7a20h_interval(struct sc7a20h *acc)
+{
+	ktime_t interval = ms_to_ktime(acc->delay_ms);
+
+	if (acc->delay_ms < 11)
+		interval = ktime_sub(interval, ns_to_ktime(500000));
+
+	return interval;
+}
+
 static void sc7a20h_start(struct sc7a20h *acc)
 {
 	if (!acc->enabled)
 		return;
 
-	hrtimer_start(&acc->timer, ms_to_ktime(acc->delay_ms),
-		      HRTIMER_MODE_REL);
+	hrtimer_start(&acc->timer, sc7a20h_interval(acc), HRTIMER_MODE_REL);
 }
 
 static void sc7a20h_set_enabled(struct sc7a20h *acc, bool enable)
@@ -367,10 +384,16 @@ static int sc7a20h_probe(struct i2c_client *client)
 	if (id2 < 0)
 		return id2;
 
+	/*
+	 * The vendor probe has no ID gate: it fails only when the I2C transfer
+	 * itself fails (after one retry) and otherwise initialises whatever
+	 * answers on the address.  A mismatch here is worth reporting but must
+	 * not take the accelerometer down, or stock userspace loses screen
+	 * rotation on parts whose ID registers read differently.
+	 */
 	if (devid != SC7A20H_DEVID_VALUE || id2 != SC7A20H_ID2_VALUE)
-		return dev_err_probe(dev, -ENODEV,
-				     "not an SC7A20H (0x0f=0x%02x, 0x70=0x%02x)\n",
-				     devid, id2);
+		dev_warn(dev, "unexpected ID (0x0f=0x%02x, 0x70=0x%02x), continuing\n",
+			 devid, id2);
 
 	mutex_init(&acc->lock);
 

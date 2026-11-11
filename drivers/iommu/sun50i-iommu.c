@@ -150,6 +150,9 @@ struct sun50i_iommu_variant {
 	unsigned int nr_masters;
 };
 
+/* The single instance, as the vendor's global_iommu_dev */
+static struct sun50i_iommu *sun50i_iommu_global;
+
 struct sun50i_iommu {
 	struct iommu_device iommu;
 
@@ -160,6 +163,14 @@ struct sun50i_iommu {
 	void __iomem *base;
 	struct reset_control *reset;
 	struct clk *clk;
+
+	/*
+	 * Shadow of IOMMU_BYPASS_REG.  The vendor keeps the same word at
+	 * dev+0x24 and rewrites the register from it on every change, so a
+	 * per-master bypass requested through sunxi_enable_device_iommu()
+	 * survives a later domain attach instead of being reset to 0.
+	 */
+	u32 bypass;
 
 	struct iommu_domain *domain;
 	struct iommu_group *group;
@@ -474,7 +485,7 @@ static int sun50i_iommu_enable(struct sun50i_iommu *iommu)
 			    IOMMU_TLB_PREFETCH_MASTER_ENABLE(4) |
 			    IOMMU_TLB_PREFETCH_MASTER_ENABLE(5));
 	}
-	iommu_write(iommu, IOMMU_BYPASS_REG, 0);
+	iommu_write(iommu, IOMMU_BYPASS_REG, iommu->bypass);
 	iommu_write(iommu, IOMMU_INT_ENABLE_REG, IOMMU_INT_MASK);
 	/*
 	 * v14 does not use the domain permission model: the vendor never
@@ -874,9 +885,40 @@ static const struct iommu_ops sun50i_iommu_ops = {
 	.map		= sun50i_iommu_map,
 	.of_xlate	= sun50i_iommu_of_xlate,
 	.probe_device	= sun50i_iommu_probe_device,
-	.release_device	= sun50i_iommu_release_device,
-	.unmap		= sun50i_iommu_unmap,
+	.release_device	= sun50i_iommu_release_device,	.unmap			= sun50i_iommu_unmap,
 };
+
+/*
+ * Vendor helper from bsp/drivers/iommu/sunxi-iommu-v1.c.  The mask table is the
+ * vendor's master_id_bitmap, read out of kernel-vmlinux.elf at 0xc17d20e8:
+ * identity, one bit per master 0..6.  A set bit in IOMMU_BYPASS_REG leaves that
+ * master untranslated, so enable != 0 clears its bit and enable == 0 sets it,
+ * exactly as the vendor does.
+ */
+static const u32 sunxi_master_id_bitmap[] = {
+	BIT(0), BIT(1), BIT(2), BIT(3), BIT(4), BIT(5), BIT(6),
+};
+
+void sunxi_enable_device_iommu(unsigned int master, unsigned int enable)
+{
+	struct sun50i_iommu *iommu = sun50i_iommu_global;
+	unsigned long flags;
+	u32 mask;
+
+	if (!iommu || master >= ARRAY_SIZE(sunxi_master_id_bitmap))
+		return;
+
+	mask = sunxi_master_id_bitmap[master];
+
+	spin_lock_irqsave(&iommu->iommu_lock, flags);
+	if (enable)
+		iommu->bypass &= ~mask;
+	else
+		iommu->bypass |= mask;
+	iommu_write(iommu, IOMMU_BYPASS_REG, iommu->bypass);
+	spin_unlock_irqrestore(&iommu->iommu_lock, flags);
+}
+EXPORT_SYMBOL_GPL(sunxi_enable_device_iommu);
 
 static const char *sun50i_iommu_master_name(struct sun50i_iommu *iommu,
 					    unsigned int master)
@@ -1395,6 +1437,8 @@ static int sun50i_iommu_probe(struct platform_device *pdev)
 		dev_warn(&pdev->dev, "Failed to create the profilling attribute\n");
 
 	bus_set_iommu(&platform_bus_type, &sun50i_iommu_ops);
+
+	sun50i_iommu_global = iommu;
 
 	return 0;
 

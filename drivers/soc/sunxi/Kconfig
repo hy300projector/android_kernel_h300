@@ -20,7 +20,7 @@ config SUNXI_SRAM
 	  whether to the CPU/DMA, or to the devices.
 
 config SUN50IW15_ADDR
-	bool "Allwinner sun50iw15 network address manager"
+	tristate "Allwinner sun50iw15 network address manager"
 	depends on ARCH_SUNXI || COMPILE_TEST
 	help
 	  Replacement for the vendor sunxi_addr module.  It owns one MAC
@@ -29,7 +29,7 @@ config SUN50IW15_ADDR
 	  the sunxi-addr-mgt class.
 
 config SUN50IW15_BOOTEVENT
-	bool "Allwinner boot time log (/proc/bootevent)"
+	tristate "Allwinner boot time log (/proc/bootevent)"
 	depends on PROC_FS && TRACEPOINTS
 	help
 	  Replacement for the vendor bootevent module.  Keeps a 960 entry ring of
@@ -37,7 +37,7 @@ config SUN50IW15_BOOTEVENT
 	  and exports sunxi_bootevent_log() for other drivers.
 
 config SUN50IW15_RFKILL
-	bool "Allwinner sun50iw15 wlan/bt power and rfkill control"
+	tristate "Allwinner sun50iw15 wlan/bt power and rfkill control"
 	depends on ARCH_SUNXI || COMPILE_TEST
 	select RFKILL
 	help
@@ -49,7 +49,7 @@ config SUN50IW15_RFKILL
 
 
 config SUN50IW15_DRM_HEAP
-	bool "Allwinner sun50iw15 DRM heap (/dev/sunxi_drm_heap)"
+	tristate "Allwinner sun50iw15 DRM heap (/dev/sunxi_drm_heap)"
 	depends on ARCH_SUNXI || COMPILE_TEST
 	select DMA_SHARED_BUFFER
 	select GENERIC_ALLOCATOR
@@ -65,7 +65,7 @@ config SUN50IW15_DRM_HEAP
 	  neither, the device still appears and allocation fails with ENOSPC.
 
 config SUN50IW15_HIDTVREG
-	bool "Allwinner sun50iw15 HiDTV register access device"
+	tristate "Allwinner sun50iw15 HiDTV register access device"
 	depends on ARCH_SUNXI || COMPILE_TEST
 	help
 	  Replacement for the vendor hidtvreg_dev module.  Provides
@@ -75,7 +75,7 @@ config SUN50IW15_HIDTVREG
 	  the vendor driver, because no other driver owns the TV blocks.
 
 config SUN50IW15_IR
-	bool "Allwinner sun50iw15 IR receiver"
+	tristate "Allwinner sun50iw15 IR receiver"
 	depends on ARCH_SUNXI || COMPILE_TEST
 	depends on RC_CORE
 	help
@@ -83,7 +83,7 @@ config SUN50IW15_IR
 	  allwinner,irrx receiver block.
 
 config SUN50IW15_MOTOR
-	bool "Allwinner sun50iw15 focus motor and limiter"
+	tristate "Allwinner sun50iw15 focus motor and limiter"
 	depends on OF && GPIOLIB
 	help
 	  Focus motor (stepper phase GPIOs plus end-stop switch) for the
@@ -113,23 +113,24 @@ config SUN50IW15_PCK_PD
 	  debugfs under /sys/kernel/debug/sun50iw15-pck-pd/.
 
 config SUN50IW15_PCK_PD_TOLERATE_TIMEOUT
-	bool "Tolerate pck-600 power transition timeouts (bring-up only)"
+	bool "Tolerate pck-600 power transition timeouts (vendor behaviour)"
 	depends on SUN50IW15_PCK_PD
 	default y
 	help
-	  Bring-up escape hatch for the pck-600 GPU/VE power domains.
+	  Match the vendor driver's handling of pck-600 transitions.
 
-	  The power transition delays programmed by the driver are inherited
-	  from the A523 block because this SoC's vendor values could not be
-	  recovered.  With this option on, a transition that does not report
-	  the requested state within 10 ms is logged and treated as success:
-	  a domain that fails to power off is marked stuck-on and not polled
-	  again, and a failed power-on no longer fails the consumer's runtime
-	  resume.
+	  The stock driver polls the domain status for 10 ms and, on timeout,
+	  only logs a message: sunxi_pd_power_on() and sunxi_pd_power_off()
+	  return 0 unconditionally after calling sunxi_pd_power() (stock
+	  vmlinux 0xc0d9653c and 0xc0d96498).  With this option on the driver
+	  does the same: a transition that does not report the requested
+	  state within 10 ms is logged and treated as success, a domain that
+	  fails to power off is marked stuck-on and not polled again, and a
+	  failed power-on does not fail the consumer's runtime resume.
 
-	  Set this to n for production once the delays have been verified on
-	  hardware; that restores strict gating, where transition failures are
-	  logged and returned to genpd.
+	  Keep this enabled to behave like stock.  Setting it to n is
+	  stricter than the vendor -- transition failures are returned to
+	  genpd -- and is only useful for debugging an expected transition.
 
 config SUNXI_TVTOP
 	tristate "Allwinner sunxi TV top module (tvfe/tvcap)"

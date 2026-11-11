@@ -511,3 +511,26 @@ source "drivers/misc/pvpanic/Kconfig"
 source "drivers/misc/decd/Kconfig"
 
 endmenu
+
+config SUNXI_AW_CONFIG
+	tristate "Allwinner aw-config (/proc/aw-config.gz)"
+	depends on PROC_FS
+	help
+	  Publish a gzipped copy of the kernel .config as /proc/aw-config.gz,
+	  matching the vendor aw-config module.
+
+config SUNXI_DIRECT_GPIO
+	tristate "Allwinner sunxi direct GPIO control (gpio_sw class)"
+	depends on GPIOLIB && OF && PINCTRL
+	help
+	  Export a DT-listed set of GPIOs to userspace through the gpio_sw
+	  class (cfg/pull/drv/data/light), as the vendor sunxi-direct-gpio
+	  module does.
+
+config MCU_COMM_DEV
+	tristate "HiDTVPro MCU communication driver"
+	depends on ARCH_SUNXI || COMPILE_TEST
+	help
+	  Character device (/dev/mcu_comm) carrying the MCU protocol of the
+	  HiDTVPro TV SOC over the arisc msgbox channel.  Also provides the
+	  sunxi_arisc_rpm_send()/register_message_callback() exports.
